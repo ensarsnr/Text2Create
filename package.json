@@ -1,0 +1,34 @@
+{
+  "name": "text2create",
+  "private": true,
+  "version": "0.1.0",
+  "description": "An open-source AI-powered platform that transforms natural-language instructions into real projects, creations, and executable tasks.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ensarsnr/Text2Create.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "preview": "vite preview",
+    "lint:md": "markdownlint-cli2 '**/*.md'",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.3.0",
+    "markdownlint-cli2": "0.24.2",
+    "typescript": "6.0.3",
+    "vite": "8.3.8"
+  }
+}
