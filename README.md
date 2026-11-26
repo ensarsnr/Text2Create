@@ -6,6 +6,12 @@ Text2Create is an open-source, AI-powered creation and execution platform. Its g
 > **Project status: Early development — Foundation stage.**
 > This repository currently contains project documentation, contribution guidelines, and repository tooling only. **No application code has been written yet.** Every capability described below is planned, not implemented. See [Project Status](docs/PROJECT_STATUS.md) for details.
 
+## Installation
+
+There is **no downloadable release yet**. Text2Create cannot be installed or used at this stage.
+
+When releases become available, they will be published on the [Releases page](https://github.com/ensarsnr/Text2Create/releases) together with release notes and known limitations. Only download builds from that page. Release tags are protected and releases are immutable once published. Progress toward the first release is tracked in the [Roadmap](docs/ROADMAP.md).
+
 ## Vision and Purpose
 
 Many technical projects start as an idea expressed in plain language and then require a long chain of manual work: clarifying requirements, choosing tools, producing files, running tools, and checking that the results are correct.
@@ -116,7 +122,7 @@ See [SECURITY.md](SECURITY.md) for vulnerability reporting and the full security
 
 ## Contributing
 
-Contributions are welcome, and at this stage the most valuable contributions are feedback on the architecture, the Project IR concept, and the MVP scope. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) before opening an issue or pull request.
+Contributions are welcome, and at this stage the most valuable contributions are feedback on the architecture, the Project IR concept, and the MVP scope. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) before opening an issue or pull request. For questions and ideas, use [GitHub Discussions](https://github.com/ensarsnr/Text2Create/discussions).
 
 ## License
 
