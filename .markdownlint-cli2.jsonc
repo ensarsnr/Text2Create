@@ -1,0 +1,13 @@
+{
+  // Configuration for markdownlint-cli2: https://github.com/DavidAnson/markdownlint-cli2
+  "config": {
+    "default": true,
+    // Prose is written with one paragraph per line.
+    "MD013": false,
+    // Repeated headings are allowed in different sections (for example in ADRs).
+    "MD024": { "siblings_only": true },
+    // The pull request template intentionally starts with a second-level heading.
+    "MD041": false
+  },
+  "ignores": ["node_modules/**", "target/**", "dist/**"]
+}

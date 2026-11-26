@@ -1,0 +1,12 @@
+# Keeps SHA-pinned GitHub Actions up to date.
+# Add ecosystems (cargo, npm) here when application dependencies are introduced.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    commit-message:
+      prefix: ci
