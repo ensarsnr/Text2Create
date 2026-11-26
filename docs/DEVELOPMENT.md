@@ -100,6 +100,15 @@ yamllint --strict .
 - Lower-severity findings must not be ignored silently. Each one is either fixed or documented with a justification in the pull request that introduces or discovers it.
 - Rust dependencies are not yet audited in CI. Dependabot alerts cover Cargo dependencies in the meantime.
 
+## Dependency Update Policy
+
+Dependabot proposes version updates weekly (`.github/dependabot.yml`):
+
+- **Cooldown:** a new release must be at least 14 days old before an update is proposed. Security updates are not delayed.
+- **Major versions:** npm and Cargo major version updates are not proposed automatically. Adopt them deliberately in a dedicated pull request, with the reasoning recorded there. Dependabot alerts still report vulnerabilities in any version.
+- **Grouping:** Tauri packages are grouped (`@tauri-apps/*` for npm, `tauri` and `tauri-*` for Cargo), and other minor and patch updates are grouped per ecosystem. Merge the npm and Cargo Tauri groups together so that `@tauri-apps/api` and the `tauri` crate stay on the same minor version.
+- Security updates should be reviewed and merged promptly. Routine version updates can be batched.
+
 ## Workflow
 
 1. Create a branch from `main` using the naming conventions in [CONTRIBUTING.md](../CONTRIBUTING.md#branches).

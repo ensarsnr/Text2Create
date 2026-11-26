@@ -1,10 +1,19 @@
-# Keeps SHA-pinned GitHub Actions, npm, and Cargo dependencies up to date.
+# Dependabot version updates for SHA-pinned GitHub Actions, npm, and Cargo.
+#
+# Policy (see docs/DEVELOPMENT.md):
+# - New releases wait 14 days before an update is proposed (cooldown).
+#   Cooldown does not delay security updates.
+# - Major version updates for npm and Cargo are not proposed automatically;
+#   they are adopted deliberately in a dedicated pull request.
+# - Tauri packages are grouped so related versions move together.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     labels:
       - dependencies
     commit-message:
@@ -13,6 +22,17 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      tauri:
+        patterns:
+          - "@tauri-apps/*"
+      npm-minor-and-patch:
+        update-types: ["minor", "patch"]
     labels:
       - dependencies
     commit-message:
@@ -21,6 +41,18 @@ updates:
     directory: /src-tauri
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      tauri:
+        patterns:
+          - "tauri"
+          - "tauri-*"
+      cargo-minor-and-patch:
+        update-types: ["minor", "patch"]
     labels:
       - dependencies
     commit-message:
