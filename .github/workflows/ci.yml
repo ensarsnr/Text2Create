@@ -61,3 +61,80 @@ jobs:
           "$RUNNER_TEMP/yamllint/bin/pip" install --disable-pip-version-check yamllint==1.38.0
       - name: Lint YAML files
         run: '"$RUNNER_TEMP/yamllint/bin/yamllint" --strict .'
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies (install scripts disabled via .npmrc)
+        run: npm ci
+      - name: Verify registry signatures
+        run: npm audit signatures
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+      - name: Type-check
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+
+  desktop:
+    name: Desktop app (macOS)
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies (install scripts disabled via .npmrc)
+        run: npm ci
+      - name: Build frontend (required by tauri::generate_context!)
+        run: npm run build
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - name: Cache Cargo artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock') }}
+      - name: Check formatting
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: Run Clippy
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Run tests
+        working-directory: src-tauri
+        run: cargo test --locked
+      - name: Build application bundle
+        run: npm run tauri -- build --bundles app --ci
+      - name: Verify bundle architecture
+        run: |
+          APP=src-tauri/target/release/bundle/macos/Text2Create.app
+          BIN=$(find "$APP/Contents/MacOS" -maxdepth 1 -type f -perm -u+x | head -n 1)
+          test -n "$BIN"
+          lipo -archs "$BIN"
+          lipo -archs "$BIN" | grep -qx arm64
