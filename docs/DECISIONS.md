@@ -34,6 +34,8 @@ This log records architecture and project decisions using lightweight Architectu
 | [ADR-0009](#adr-0009-macos-as-the-initial-target-platform) | macOS as the initial target platform | Accepted |
 | [ADR-0010](#adr-0010-monolithic-single-orchestrator-architecture) | Monolithic, single-orchestrator architecture | Accepted |
 | [ADR-0011](#adr-0011-explicit-approval-for-consequential-operations) | Explicit approval for consequential operations | Accepted |
+| [ADR-0012](#adr-0012-vite-and-npm-for-the-frontend-toolchain) | Vite and npm for the frontend toolchain | Accepted |
+| [ADR-0013](#adr-0013-application-bundle-identifier) | Application bundle identifier | Accepted (provisional) |
 
 ---
 
@@ -89,7 +91,7 @@ This log records architecture and project decisions using lightweight Architectu
 
 **Decision:** Use React with TypeScript.
 
-**Open:** build tool, state management, component library, and styling approach. These will be decided in Milestone 1.
+**Open:** state management, component library, and styling approach. The build tool is decided in [ADR-0012](#adr-0012-vite-and-npm-for-the-frontend-toolchain).
 
 **Consequences:** A large ecosystem and contributor pool. Frontend dependencies must be kept deliberate to limit supply-chain risk.
 
@@ -190,13 +192,39 @@ This log records architecture and project decisions using lightweight Architectu
 
 ---
 
+## ADR-0012: Vite and npm for the frontend toolchain
+
+- **Status:** Accepted
+- **Date:** 2026-11-26
+
+**Context:** The application skeleton needs a frontend build tool and a package manager. ADR-0004 left the build tool open.
+
+**Decision:** Use Vite as the frontend dev server and bundler, and npm as the package manager. TypeScript is type-checked with `tsc -b` using project references. Package install scripts are disabled through `.npmrc` (`ignore-scripts=true`).
+
+**Consequences:** Vite is the default choice in the Tauri templates, which keeps the setup close to upstream documentation. npm ships with Node.js, so contributors need no additional package manager. State management, component library, and styling remain open.
+
+---
+
+## ADR-0013: Application bundle identifier
+
+- **Status:** Accepted (provisional)
+- **Date:** 2026-11-26
+
+**Context:** Tauri requires a unique reverse-domain bundle identifier. On macOS it becomes the application's permanent identity: it determines the bundle ID, the application data directory, Keychain item scope, code signing, notarization, and update channels.
+
+**Decision:** Use `io.github.ensarsnr.text2create`.
+
+**Consequences:** Changing the identifier after users exist makes macOS treat the application as a different app and requires data and settings migration. The identifier is tied to the current GitHub account; if the project moves to an organization or acquires its own domain, the identifier should be reconsidered **before the Public Alpha (Milestone 7)**, after which it should be treated as final.
+
+---
+
 ## Open Questions
 
 These questions do not yet have ADRs. They should be resolved through discussion or prototypes, then recorded as ADRs.
 
 | Topic | Question | Expected milestone |
 | --- | --- | --- |
-| Frontend tooling | Which build tool, state management, and component library? | 1 |
+| Frontend tooling | Which state management and component library? (Build tool decided in ADR-0012.) | 1–2 |
 | Persistence | Which Rust SQLite library and migration approach? One database per project or global? | 1–2 |
 | Project IR | Relational, document, or hybrid model? How are domain types defined? | 2 |
 | Artifact versioning | Git, content-addressed storage, or snapshots? | 2 |

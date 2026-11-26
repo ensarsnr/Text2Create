@@ -3,12 +3,12 @@
 Text2Create is an open-source, AI-powered creation and execution platform. Its goal is to turn natural-language instructions into real projects, creations, and executable tasks.
 
 > [!IMPORTANT]
-> **Project status: Early development — Foundation stage.**
-> This repository currently contains project documentation, contribution guidelines, and repository tooling only. **No application code has been written yet.** Every capability described below is planned, not implemented. See [Project Status](docs/PROJECT_STATUS.md) for details.
+> **Project status: Early development — Application Foundation (Milestone 1).**
+> The repository contains a minimal desktop application skeleton (Tauri 2, React, TypeScript, Rust) with a single demo command that verifies frontend-to-Rust communication. **No product features are implemented.** Every capability described below is planned, not implemented. See [Project Status](docs/PROJECT_STATUS.md) for details.
 
 ## Installation
 
-There is **no downloadable release yet**. Text2Create cannot be installed or used at this stage.
+There is **no downloadable release yet**. Text2Create cannot be installed as an application at this stage. Developers can build and run the skeleton from source by following the [Development Guide](docs/DEVELOPMENT.md).
 
 When releases become available, they will be published on the [Releases page](https://github.com/ensarsnr/Text2Create/releases) together with release notes and known limitations. Only download builds from that page. Release tags are protected and releases are immutable once published. Progress toward the first release is tracked in the [Roadmap](docs/ROADMAP.md).
 

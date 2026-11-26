@@ -6,8 +6,8 @@
 
 | # | Milestone | Status |
 | --- | --- | --- |
-| 0 | Repository Foundation | In progress |
-| 1 | Application Foundation | Planned |
+| 0 | Repository Foundation | Done |
+| 1 | Application Foundation | In progress |
 | 2 | Project Core and Project IR | Planned |
 | 3 | AI Provider Layer | Planned |
 | 4 | Task Orchestration and Execution | Planned |

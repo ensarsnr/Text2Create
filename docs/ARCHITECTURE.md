@@ -79,7 +79,7 @@ The frontend is responsible for presentation and user interaction only:
 
 The frontend should not hold authoritative project state or call external services directly. It communicates with the Rust core through Tauri commands and events.
 
-**Open:** state management library, component library, and build tooling.
+**Open:** state management library and component library. The build tooling is Vite with npm ([ADR-0012](DECISIONS.md#adr-0012-vite-and-npm-for-the-frontend-toolchain)).
 
 ### Application Core — Rust (Direction)
 
