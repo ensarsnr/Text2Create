@@ -9,5 +9,5 @@
     // The pull request template intentionally starts with a second-level heading.
     "MD041": false
   },
-  "ignores": ["node_modules/**", "target/**", "dist/**"]
+  "ignores": ["**/node_modules/**", "**/target/**", "**/dist/**"]
 }

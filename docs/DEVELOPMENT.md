@@ -1,10 +1,10 @@
 # Development Guide
 
-This guide explains how to work with the repository today and outlines the toolchain expected once application development begins.
+This guide explains how to set up, build, run, and check Text2Create locally.
 
 ## Current State
 
-The repository contains documentation and repository tooling only. There is no application to build or run yet.
+The repository contains a minimal desktop application skeleton: a Tauri 2 shell, a React + TypeScript frontend, and a Rust core with one demo command (`greet`) that verifies frontend-to-Rust communication. No product features are implemented. See [Project Status](PROJECT_STATUS.md).
 
 ## Repository Layout
 
@@ -13,59 +13,92 @@ The repository contains documentation and repository tooling only. There is no a
 ├── .github/              Issue and PR templates, CI workflow, Dependabot configuration
 ├── docs/                 Architecture, decisions, roadmap, status, and guides
 ├── scripts/              Repository maintenance scripts
-├── src/                  Reserved for the React + TypeScript frontend (empty)
-├── src-tauri/            Reserved for the Tauri 2 / Rust application core (empty)
+├── src/                  React + TypeScript frontend
+├── src-tauri/            Tauri 2 configuration and Rust application core
+│   ├── capabilities/     Permissions granted to the frontend
+│   ├── icons/            Application icons (Tauri template placeholders)
+│   ├── src/              Rust source code
+│   └── tauri.conf.json   Tauri configuration, including the Content Security Policy
 ├── tests/                Reserved for cross-cutting tests (empty)
-├── CONTRIBUTING.md
-├── PROJECT_OVERVIEW.md
-├── README.md
-├── SECURITY.md
-└── THIRD_PARTY_LICENSES.md
+├── index.html            Frontend entry page
+├── package.json          npm scripts and frontend dependencies
+├── rust-toolchain.toml   Pinned Rust toolchain
+└── vite.config.ts        Vite configuration
 ```
 
-The `src/` and `src-tauri/` names follow the default Tauri project layout. They contain only a `.gitkeep` file until Milestone 1.
+## Prerequisites
 
-## Prerequisites (current)
+The initial target platform is macOS on Apple Silicon.
 
-To run the repository checks locally you need:
+| Tool | Version | Notes |
+| --- | --- | --- |
+| Xcode or Xcode Command Line Tools | Current | Required by Tauri on macOS |
+| Rust via [rustup](https://rustup.rs/) | Pinned in `rust-toolchain.toml` | rustup installs the pinned toolchain automatically |
+| Node.js | Major version in `.nvmrc` | npm is the package manager |
+| Python | 3.10 or later | Repository structure check and yamllint |
+| [yamllint](https://yamllint.readthedocs.io/) | Optional | YAML linting |
 
-- Git
-- Python 3.10 or later (for the repository structure check)
-- Node.js 20 or later (optional, for Markdown linting via `npx`)
-- [yamllint](https://yamllint.readthedocs.io/) (optional, for YAML linting)
+If `cargo` or `rustc` is not found in a new or non-interactive shell, load the Rust environment first:
+
+```sh
+. "$HOME/.cargo/env"            # bash, zsh, sh
+source "$HOME/.cargo/env.fish"  # fish
+```
+
+## Installing Dependencies
+
+```sh
+npm ci
+```
+
+The repository's `.npmrc` sets `ignore-scripts=true`, so package install scripts do not run. All current dependencies work without them: native packages (for example the Tauri CLI, Rolldown, Lightning CSS, and `fsevents`) ship prebuilt binaries for macOS on Apple Silicon. If a future dependency needs an install script, the change must be reviewed and documented in its pull request.
+
+## Running the Application
+
+```sh
+npm run tauri dev
+```
+
+This starts the Vite dev server on `http://localhost:1420` and opens the desktop window. Opening `http://localhost:1420` in a regular web browser shows the interface, but calls to the Rust core only work inside the desktop window.
+
+## Building
+
+```sh
+npm run build                                  # Frontend only, output in dist/
+npm run tauri -- build --bundles app           # macOS .app bundle (unsigned)
+```
+
+The bundle is written to `src-tauri/target/release/bundle/macos/Text2Create.app`. Builds are not code-signed or notarized.
 
 ## Running Checks Locally
 
-CI runs the same checks on every pull request and on pushes to `main`.
-
-Repository structure and internal link check:
+CI runs these checks on every pull request and on pushes to `main`.
 
 ```sh
+# Frontend
+npm run typecheck
+npm run build
+npm audit signatures
+npm audit --audit-level=high
+
+# Rust (run in src-tauri/)
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+
+# Repository
 python3 scripts/check_repository.py
+npm run lint:md
+yamllint --strict .
 ```
 
-Markdown lint, using the configuration in `.markdownlint-cli2.jsonc`:
+`markdownlint-cli2` is a pinned development dependency that uses the same version as the Markdown lint action in CI.
 
-```sh
-npx markdownlint-cli2 "**/*.md"
-```
+## Dependency Audit Policy
 
-YAML lint, using the configuration in `.yamllint.yml`:
-
-```sh
-yamllint .
-```
-
-## Planned Toolchain (Milestone 1)
-
-The following toolchain is expected once application development begins. It is not required yet and will be confirmed in Milestone 1.
-
-- Rust (stable) via `rustup`
-- Node.js (LTS) and a package manager (to be decided)
-- Xcode Command Line Tools (macOS)
-- Tauri 2 prerequisites for macOS
-
-Build, test, and lint commands will be documented here when they exist.
+- CI fails on npm advisories of severity `high` or above.
+- Lower-severity findings must not be ignored silently. Each one is either fixed or documented with a justification in the pull request that introduces or discovers it.
+- Rust dependencies are not yet audited in CI. Dependabot alerts cover Cargo dependencies in the meantime.
 
 ## Workflow
 

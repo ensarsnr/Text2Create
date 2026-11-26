@@ -109,12 +109,14 @@ Pull requests are merged with **squash merge** only. Head branches are deleted a
 Run the repository checks locally before opening a pull request:
 
 ```sh
+npm run typecheck && npm run build
+(cd src-tauri && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked)
 python3 scripts/check_repository.py
-npx markdownlint-cli2 "**/*.md"
-yamllint .
+npm run lint:md
+yamllint --strict .
 ```
 
-See the [Development Guide](docs/DEVELOPMENT.md) for prerequisites. Application build and test commands will be added when application code exists.
+See the [Development Guide](docs/DEVELOPMENT.md) for prerequisites, the full list of checks, and the dependency audit policy. Security advisories reported by `npm audit` must be fixed or justified in the pull request; they must not be ignored silently.
 
 ## Updating Documentation
 
