@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 
 export default function App() {
   const [name, setName] = useState("");
@@ -9,6 +9,12 @@ export default function App() {
   async function sendToCore() {
     setReply(null);
     setError(null);
+    if (!isTauri()) {
+      setError(
+        "The Rust core is only available inside the Text2Create desktop app, not in a web browser.",
+      );
+      return;
+    }
     try {
       // Demo command that verifies frontend-to-Rust communication.
       setReply(await invoke<string>("greet", { name }));
