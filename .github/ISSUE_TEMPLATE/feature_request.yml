@@ -1,0 +1,64 @@
+name: Feature request
+description: Propose a new capability, improvement, or design change.
+title: "feat: "
+labels: ["feature", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the proposal. Please describe the problem before the solution.
+
+        For architectural changes, also consider the open questions in the [decision log](https://github.com/ensarsnr/Text2Create/blob/main/docs/DECISIONS.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem would this solve? Who is affected?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the change you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you considered and why they are less suitable.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the project does this affect?
+      options:
+        - Documentation
+        - Architecture
+        - Project IR
+        - AI provider layer
+        - Task orchestration and execution
+        - Tool integrations
+        - Validation
+        - User interface
+        - Security
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and compatibility considerations
+      description: Could this change affect permissions, approvals, secrets, untrusted input, or existing projects?
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/ensarsnr/Text2Create/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Project documentation
+    url: https://github.com/ensarsnr/Text2Create/tree/main/docs
+    about: Read the architecture, roadmap, and decision log before opening an issue.
