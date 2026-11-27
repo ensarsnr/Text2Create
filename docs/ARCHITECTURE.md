@@ -91,17 +91,13 @@ The Rust core owns project state, orchestration, tool execution, provider access
 
 SQLite is the preferred store for project metadata, Project IR records, task history, provenance, and settings. Large or tool-native artifacts (for example KiCad files or firmware binaries) are expected to remain as regular files in the project directory, referenced from the database.
 
-**Open:**
-
-- Rust database access library
-- Migration strategy
-- Whether one database per project or one global database (or both) is the better model
+The `text2create-store` crate (`src-tauri/crates/text2create-store`) implements project persistence: one self-contained directory with its own SQLite database per project, the Project IR stored as validated canonical JSON, transactional saves, and automatic schema migrations. See [ADR-0015](DECISIONS.md#adr-0015-sqlite-library-schema-migrations-and-project-layout). Task history and settings are not stored yet.
 
 ### Project IR (Direction)
 
 The Project IR is the structured, durable representation of a project: its requirements, artifacts, entities, plans, provenance, and validation results. It is the source of truth that the AI, tools, and UI work against, rather than chat history.
 
-The IR is a single logical document defined by Rust types, independent of how it is stored. Domain-specific content is handled by compiled-in, versioned domain codecs, and loading rejects any data it cannot fully validate. The v1 model is specified in [PROJECT_IR.md](PROJECT_IR.md). The `text2create-ir` crate (`src-tauri/crates/text2create-ir`, no Tauri dependency) implements the model, strict loading, invariants, canonical serialization, and the write path (validated change sets with provenance created by the core); persistence (#12) is not implemented, and the application does not use the crate yet. See [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading).
+The IR is a single logical document defined by Rust types, independent of how it is stored. Domain-specific content is handled by compiled-in, versioned domain codecs, and loading rejects any data it cannot fully validate. The v1 model is specified in [PROJECT_IR.md](PROJECT_IR.md). The `text2create-ir` crate (`src-tauri/crates/text2create-ir`, no Tauri dependency) implements the model, strict loading, invariants, canonical serialization, and the write path (validated change sets with provenance created by the core). Projects are persisted by `text2create-store` (ADR-0015). See [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading).
 
 ### AI Provider Adapter Layer (Direction, design is a Proposal)
 

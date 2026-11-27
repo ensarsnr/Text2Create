@@ -12,7 +12,7 @@ rust-version = "1.90"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace]
-members = ["crates/text2create-ir"]
+members = ["crates/text2create-ir", "crates/text2create-store"]
 
 [lib]
 name = "text2create_lib"
@@ -23,3 +23,6 @@ tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
 tauri = { version = "2.12.5", features = [] }
+serde = { version = "1.0.229", features = ["derive"] }
+text2create-ir = { path = "crates/text2create-ir" }
+text2create-store = { path = "crates/text2create-store" }

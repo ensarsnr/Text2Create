@@ -1,6 +1,6 @@
 # Project IR
 
-> **Status:** v1 specification — **draft, implementation in progress.** This document specifies the first version of the Project IR data model. The model, strict loading, invariants, canonical serialization, and the [write path](#write-path) are implemented in `src-tauri/crates/text2create-ir`; the application does not use it yet. Implementation is tracked in [#10](https://github.com/ensarsnr/Text2Create/issues/10). The underlying decisions are [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading), both **Accepted (provisional)** until the implementation confirms them. Decisions taken while specifying v1 are listed under [Specification Decisions](#specification-decisions).
+> **Status:** v1 specification — **draft, implementation in progress.** This document specifies the first version of the Project IR data model. The model, strict loading, invariants, canonical serialization, and the [write path](#write-path) are implemented in `src-tauri/crates/text2create-ir`; projects are persisted by `text2create-store` (ADR-0015). Implementation is tracked in [#10](https://github.com/ensarsnr/Text2Create/issues/10). The underlying decisions are [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading), both **Accepted (provisional)** until the implementation confirms them. Decisions taken while specifying v1 are listed under [Specification Decisions](#specification-decisions).
 
 ## What the Project IR Is
 
@@ -33,11 +33,11 @@ The Project IR keeps conversation as an input and records its outcomes as struct
 9. **Model-friendly:** relevant parts of the IR can be serialized into compact, structured context for AI models.
 10. **Safe against untrusted input:** content originating from models, files, or external sources is validated before it is written into the IR.
 
-At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement 1 depends on persistence ([#12](https://github.com/ensarsnr/Text2Create/issues/12)). Requirement 4 is addressed by append-only provenance records (see [Provenance](#provenance)): every change is attributed to its cause, but recording the individual operations of each change, and requirement 6, depend on the change journal ([#14](https://github.com/ensarsnr/Text2Create/issues/14)). Requirement 9 is addressed by a separate context projection in Milestone 3.
+At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement 1 is addressed by persistence outside the IR crate ([#12](https://github.com/ensarsnr/Text2Create/issues/12), ADR-0015). Requirement 4 is addressed by append-only provenance records (see [Provenance](#provenance)): every change is attributed to its cause, but recording the individual operations of each change, and requirement 6, depend on the change journal ([#14](https://github.com/ensarsnr/Text2Create/issues/14)). Requirement 9 is addressed by a separate context projection in Milestone 3.
 
 ## Principles
 
-- **Logical model independent of storage.** The IR is a single logical document that is loaded, validated, and reasoned about as a whole. How it is stored (SQLite, files) is decided separately in [#12](https://github.com/ensarsnr/Text2Create/issues/12). The model contains no storage concepts such as row IDs.
+- **Logical model independent of storage.** The IR is a single logical document that is loaded, validated, and reasoned about as a whole. How it is stored is decided separately: [ADR-0015](DECISIONS.md#adr-0015-sqlite-library-schema-migrations-and-project-layout) stores the canonical document in a per-project SQLite database ([#12](https://github.com/ensarsnr/Text2Create/issues/12)). The model contains no storage concepts such as row IDs.
 - **Rust types are the source of truth.** The schema is defined by Rust types in a separate crate of the application core that does not depend on Tauri. A JSON Schema, if needed (for example for model structured output or frontend types), is generated from them, never maintained by hand.
 - **Compiled-in, versioned domains.** Domain-specific content is defined by domain codecs compiled into the application. There is no runtime loading of third-party schemas.
 - **Strict loading.** Data that cannot be fully validated is rejected, never partially accepted, and never written back.
@@ -53,7 +53,7 @@ At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement
 | — | Embedded (firmware) domain schema | [#44](https://github.com/ensarsnr/Text2Create/issues/44) |
 | Strict loading, version checks, canonical serialization, invariants | Migrations between versions, backups before migration | [#11](https://github.com/ensarsnr/Text2Create/issues/11) |
 | Write path: change sets, operations, provenance creation (see [Write Path](#write-path)) | — | [#43](https://github.com/ensarsnr/Text2Create/issues/43); required before #12 |
-| — | Persistence (SQLite mapping, transactions, single-writer locking) | [#12](https://github.com/ensarsnr/Text2Create/issues/12) |
+| — | Persistence: implemented outside the IR crate by `text2create-store` ([ADR-0015](DECISIONS.md#adr-0015-sqlite-library-schema-migrations-and-project-layout)) | [#12](https://github.com/ensarsnr/Text2Create/issues/12) |
 | `Digest` value format | Computing content digests, file access, detecting external file changes | [#13](https://github.com/ensarsnr/Text2Create/issues/13) |
 | — | Change journal, undo, rollback | [#14](https://github.com/ensarsnr/Text2Create/issues/14) |
 | `TaskRunId` as a reference type | Task runs, execution status, logs, timeouts | [#25](https://github.com/ensarsnr/Text2Create/issues/25), [#27](https://github.com/ensarsnr/Text2Create/issues/27) |
@@ -461,5 +461,4 @@ These remain open and belong to later issues:
 - How fine-grained should change history be: per field, per record, or per change set? ([#14](https://github.com/ensarsnr/Text2Create/issues/14))
 - How should rollback interact with external files and with actions that cannot be reversed, such as flashing firmware? ([#14](https://github.com/ensarsnr/Text2Create/issues/14), [#39](https://github.com/ensarsnr/Text2Create/issues/39))
 - How should the IR detect and reconcile changes made to artifacts outside Text2Create? ([#13](https://github.com/ensarsnr/Text2Create/issues/13))
-- Is SQLite or a set of version-control-friendly text files the authoritative on-disk format? ([#12](https://github.com/ensarsnr/Text2Create/issues/12))
 - Where should cross-domain numeric constraints (for example budget or timing) live, given that the core has no unit type?

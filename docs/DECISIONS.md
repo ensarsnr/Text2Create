@@ -37,6 +37,7 @@ This log records architecture and project decisions using lightweight Architectu
 | [ADR-0012](#adr-0012-vite-and-npm-for-the-frontend-toolchain) | Vite and npm for the frontend toolchain | Accepted |
 | [ADR-0013](#adr-0013-application-bundle-identifier) | Application bundle identifier | Accepted (provisional) |
 | [ADR-0014](#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading) | Project IR schema definition, domain extensions, and strict loading | Accepted (provisional) |
+| [ADR-0015](#adr-0015-sqlite-library-schema-migrations-and-project-layout) | SQLite library, schema migrations, and project layout | Accepted (provisional) |
 
 ---
 
@@ -120,7 +121,7 @@ This log records architecture and project decisions using lightweight Architectu
 
 **Decision:** Use SQLite as the local database.
 
-**Open:** database access library, migration tooling, and per-project versus global database layout.
+**Open:** resolved by [ADR-0015](#adr-0015-sqlite-library-schema-migrations-and-project-layout) (library, migrations, and layout).
 
 **Consequences:** A single-file, embedded, widely supported store. Large tool-native artifacts remain as files in the project directory.
 
@@ -263,6 +264,27 @@ The schema definition approach is decided in [ADR-0014](#adr-0014-project-ir-sch
 
 ---
 
+## ADR-0015: SQLite library, schema migrations, and project layout
+
+- **Status:** Accepted (provisional)
+- **Date:** 2026-11-27
+
+**Context:** ADR-0006 selects SQLite but leaves the access library, migration approach, and database layout open (#12). Projects should be easy to move and back up, the stored IR must stay validated, and a failed write must not damage a project.
+
+**Decision:**
+
+- **Library:** `rusqlite` with its `bundled` feature, in a separate `text2create-store` crate without a Tauri dependency. The bundled SQLite is built from source, so the SQLite version does not depend on the system. It must be at least 3.54.0 (`libsqlite3-sys` 0.39, `rusqlite` 0.41), which fixes RUSTSEC-2026-0459 for databases opened together with a `-wal` file.
+- **Layout:** one self-contained directory per project, named by its project ID, under `projects/` in the application data directory (`~/Library/Application Support/io.github.ensarsnr.text2create/` on macOS, per ADR-0013). Each directory contains `project.sqlite`. Artifact files will live in the same directory (#13). There is no global database. The project list is built by reading each project database.
+- **Storage of the IR:** the database stores the Project IR document in canonical JSON in a single row, together with copies of the project ID, name, and update time for listing. Stored data is written only from the output of the write path and read only through `Project::load`, so every IR validation rule applies. Relational tables can be added later through schema migrations when a feature needs them.
+- **Migrations:** ordered SQL scripts compiled into the application. The schema version is the SQLite `user_version`, and the SQLite `application_id` identifies project databases. Pending migrations run automatically when a project is opened, in one transaction. Databases from a newer schema version, and SQLite files that are not project databases, are refused without modification.
+- **Writes:** WAL mode with `synchronous = FULL`. Each save is one transaction, and the open project changes in memory only after it commits. A revision counter rejects a save from a connection that opened the project before another connection saved it. A new project is written to a staging directory that is renamed into place only after the database has been committed.
+
+**Alternatives considered:** a global database for all projects, which makes projects hard to move and back up; a relational mapping of every IR record, which duplicates the model before any feature needs queries; `sqlx` or `diesel`, which add an async runtime or an ORM with code generation; and the `rusqlite_migration` crate, which adds a dependency for a few lines of code.
+
+**Consequences:** projects can be copied as directories once they are closed. Saving rewrites the whole document, which is acceptable for the expected project sizes (measured in #43). Listing reads every project database. Opening a project from an arbitrary location requires a later change. Concurrent writers are detected but not merged.
+
+---
+
 ## Open Questions
 
 These questions do not yet have ADRs. They should be resolved through discussion or prototypes, then recorded as ADRs.
@@ -270,7 +292,6 @@ These questions do not yet have ADRs. They should be resolved through discussion
 | Topic | Question | Expected milestone |
 | --- | --- | --- |
 | Frontend tooling | Which state management and component library? (Build tool decided in ADR-0012.) | 1–2 |
-| Persistence | Which Rust SQLite library and migration approach? One database per project or global? | 1–2 |
 | Project IR history | Change history granularity and rollback semantics (decided in ADR-0008 and ADR-0014: logical model and schema approach) | 2 |
 | Artifact versioning | Git, content-addressed storage, or snapshots? | 2 |
 | Secrets | macOS Keychain integration approach | 3 |

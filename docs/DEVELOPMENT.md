@@ -17,7 +17,8 @@ The repository contains a minimal desktop application skeleton: a Tauri 2 shell,
 ├── src-tauri/            Tauri 2 configuration and Rust application core
 │   ├── capabilities/     Permissions granted to the frontend
 │   ├── crates/
-│   │   └── text2create-ir/  Project IR v1 library (no Tauri dependency)
+│   │   ├── text2create-ir/     Project IR v1 library (no Tauri dependency)
+│   │   └── text2create-store/  SQLite project persistence (no Tauri dependency)
 │   ├── permissions/      Generated command permissions (do not edit)
 │   ├── icons/            Application icons (Tauri template placeholders)
 │   ├── src/              Rust source code
