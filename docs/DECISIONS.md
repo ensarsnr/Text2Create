@@ -259,7 +259,7 @@ The schema definition approach is decided in [ADR-0014](#adr-0014-project-ir-sch
 
 **Validation required:** the #10 implementation must demonstrate the domain interface with a test-only domain and must include negative tests for every rejection rule in [PROJECT_IR.md](PROJECT_IR.md).
 
-**Consequences:** domain payloads pass through an untyped boundary between the core and the domain codec, which must be covered by tests. Opening a project created by a newer application version fails until the application is updated. Adding a domain requires a new application release. Specification details and open decisions are in [PROJECT_IR.md](PROJECT_IR.md).
+**Consequences:** domain payloads pass through an untyped boundary between the core and the domain codec, which must be covered by tests. Opening a project created by a newer application version fails until the application is updated. Adding a domain requires a new application release. Specification details and the decisions taken while specifying v1 are in [PROJECT_IR.md](PROJECT_IR.md#specification-decisions).
 
 ---
 

@@ -1,6 +1,6 @@
 # Project IR
 
-> **Status:** v1 specification — **draft, not implemented.** This document specifies the first version of the Project IR data model. Implementation is tracked in [#10](https://github.com/ensarsnr/Text2Create/issues/10). The underlying decisions are [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading), both **Accepted (provisional)** until the implementation confirms them. Items that still need a decision are listed under [Open Decisions](#open-decisions).
+> **Status:** v1 specification — **draft, not implemented.** This document specifies the first version of the Project IR data model. Implementation is tracked in [#10](https://github.com/ensarsnr/Text2Create/issues/10). The underlying decisions are [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading), both **Accepted (provisional)** until the implementation confirms them. Decisions taken while specifying v1 are listed under [Specification Decisions](#specification-decisions).
 
 ## What the Project IR Is
 
@@ -38,7 +38,7 @@ At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement
 ## Principles
 
 - **Logical model independent of storage.** The IR is a single logical document that is loaded, validated, and reasoned about as a whole. How it is stored (SQLite, files) is decided separately in [#12](https://github.com/ensarsnr/Text2Create/issues/12). The model contains no storage concepts such as row IDs.
-- **Rust types are the source of truth.** The schema is defined by Rust types in the application core. A JSON Schema, if needed (for example for model structured output or frontend types), is generated from them, never maintained by hand.
+- **Rust types are the source of truth.** The schema is defined by Rust types in a separate crate of the application core that does not depend on Tauri. A JSON Schema, if needed (for example for model structured output or frontend types), is generated from them, never maintained by hand.
 - **Compiled-in, versioned domains.** Domain-specific content is defined by domain codecs compiled into the application. There is no runtime loading of third-party schemas.
 - **Strict loading.** Data that cannot be fully validated is rejected, never partially accepted, and never written back.
 - **No floating-point numbers.** Numbers in the IR are integers. Exact non-integer values are decimal strings.
@@ -104,6 +104,8 @@ A record reference (`RecordRef`) is serialized as the prefixed identifier; the p
 
 Scalar values are validated by rejecting invalid input, never by silently normalizing it. This keeps loading and saving exact.
 
+Text and paths are not Unicode-normalized in v1: NFC is neither required nor applied automatically. Strings that look identical but use different code points are therefore different values.
+
 | Type | Format |
 | --- | --- |
 | `Text<N>` | Non-empty, at most `N` characters, no leading or trailing whitespace, no control characters except line feed |
@@ -168,6 +170,8 @@ Domain objects such as components, nets, or firmware targets.
 | `name` | `Text<120>` |
 | `status` | `proposed`; `accepted` (`by`); `rejected` (`by`) |
 | `data` | Domain payload, validated and normalized by the domain codec |
+
+`status` records the user's decision about the entity, for example accepting a proposed component. It is not a technical validation state. Structural validity is enforced by the domain codec whenever the project is loaded or changed, and the outcomes of checks are recorded as validation results.
 
 ### Artifacts
 
@@ -293,7 +297,7 @@ Data is never silently discarded, and data that could not be fully validated is 
 | Format or domain version newer than supported | Rejected; the file is not modified |
 | Format or domain version older than supported | Migrated after a backup ([#11](https://github.com/ensarsnr/Text2Create/issues/11)); rejected until migrations exist |
 
-There is no mechanism that preserves unknown fields and writes them back, because it would let unvalidated data persist in the IR. Opening a project from a newer version read-only may be added later.
+There is no mechanism that preserves unknown fields and writes them back, because it would let unvalidated data persist in the IR. Read-only viewing of projects from newer versions is out of scope for v1.
 
 ## Canonical Serialization
 
@@ -398,19 +402,19 @@ An excerpt of an illustrative project for the first workflow (ESP32 climate fan 
 
 The excerpt omits the remaining fields and records. A complete document must contain every top-level field and pass every invariant.
 
-## Open Decisions
+## Specification Decisions
 
-Rows marked **Decided** are settled. For the other rows, the specification assumes the first option; they must be confirmed before or during the #10 implementation.
+Decisions taken while specifying v1, with the alternatives that were rejected. Changing one of them requires updating this document and, where affected, the ADRs.
 
-| # | Decision | Current assumption | Alternative |
+| # | Topic | Decision | Rejected alternative |
 | --- | --- | --- | --- |
-| 1 | Provenance retention before the journal (#14) exists | **Decided:** append-only; no provenance record is removed until #14 defines retention | Keeping only provenance referenced by the current state (rejected: loses history before #14) |
-| 2 | Decision status on entities | Entities have `status` (`proposed`, `accepted`, `rejected`) | No status; rely on provenance only |
-| 3 | Write path (change sets, operations, provenance creation) | **Decided:** a separate issue, [#43](https://github.com/ensarsnr/Text2Create/issues/43), completed before #12 | Part of #10 (rejected) |
-| 4 | Code location | A separate crate without a Tauri dependency, as a workspace member under `src-tauri/` | A module inside the existing application crate |
-| 5 | Projects from newer versions | Rejected in v1 | Read-only viewing |
-| 6 | Unicode normalization of text and paths | Not enforced in v1 | Require or apply NFC |
-| 7 | Embedded (firmware) domain schema | **Decided:** its own issue, [#44](https://github.com/ensarsnr/Text2Create/issues/44). Electronics (#30) owns boards, components, pins, nets, and power; embedded owns firmware targets, toolchains, build configuration, and the mapping of firmware signals to pins. | Include in #30 (rejected) |
+| 1 | Provenance retention before the journal (#14) exists | Append-only; no provenance record is removed until #14 defines retention | Keeping only provenance referenced by the current state: loses history before #14 |
+| 2 | Decision status on entities | Entities have `status` (`proposed`, `accepted`, `rejected`), recording the user's decision. It is separate from technical validation (see [Entities](#entities)). | No status; rely on provenance only |
+| 3 | Write path (change sets, operations, provenance creation) | A separate issue, [#43](https://github.com/ensarsnr/Text2Create/issues/43), completed before #12 | Part of #10 |
+| 4 | Code location | A separate Rust crate without a Tauri dependency, as a Cargo workspace member under `src-tauri/` | A module inside the existing application crate |
+| 5 | Projects from newer IR versions | Rejected without modifying the file. Read-only viewing is out of scope for v1. | Read-only viewing in v1 |
+| 6 | Unicode normalization of text and paths | Not required and not applied in v1 (see [Scalar Types](#scalar-types)) | Requiring NFC or normalizing automatically |
+| 7 | Embedded (firmware) domain schema | Its own issue, [#44](https://github.com/ensarsnr/Text2Create/issues/44). Electronics (#30) owns boards, components, pins, nets, and power; embedded owns firmware targets, toolchains, build configuration, and the mapping of firmware signals to pins. | Including it in #30 |
 
 ## Open Questions
 
