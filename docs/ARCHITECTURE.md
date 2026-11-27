@@ -97,11 +97,11 @@ SQLite is the preferred store for project metadata, Project IR records, task his
 - Migration strategy
 - Whether one database per project or one global database (or both) is the better model
 
-### Project IR (Proposal)
+### Project IR (Direction)
 
 The Project IR is the structured, durable representation of a project: its requirements, artifacts, entities, plans, provenance, and validation results. It is the source of truth that the AI, tools, and UI work against, rather than chat history.
 
-The concept is described in [PROJECT_IR.md](PROJECT_IR.md). No schema has been defined yet.
+The IR is a single logical document defined by Rust types, independent of how it is stored. Domain-specific content is handled by compiled-in, versioned domain codecs, and loading rejects any data it cannot fully validate. The v1 model is specified in [PROJECT_IR.md](PROJECT_IR.md) but not implemented yet. See [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading).
 
 ### AI Provider Adapter Layer (Direction, design is a Proposal)
 

@@ -2,7 +2,7 @@
 
 **Stage:** Early development — Application Foundation (Milestone 1)
 
-**Last updated:** 2026-11-26
+**Last updated:** 2026-11-27
 
 ## Summary
 
@@ -29,7 +29,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 | Area | Status |
 | --- | --- |
 | Product features | Not started |
-| Project IR schema | Not designed |
+| Project IR | v1 specified as a draft ([Project IR](PROJECT_IR.md)); not implemented |
 | Local database (SQLite) | Not integrated |
 | AI provider integrations | Not started |
 | Engineering tool integrations (KiCad, ngspice, Arduino CLI, ESP-IDF) | Not started; candidates only |
@@ -41,7 +41,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 
 1. Complete the remaining Milestone 1 validation items (background task with progress events and cancellation, tracked in #25).
 2. Collect feedback on the architecture direction, the Project IR concept, and the MVP scope.
-3. Prepare Milestone 2: Project Core and Project IR.
+3. Prepare Milestone 2: implement the Project IR v1 model (#10).
 
 ## How to Help Now
 
