@@ -1,0 +1,22 @@
+[package]
+name = "text2create-store"
+version = "0.1.0"
+description = "SQLite persistence for Text2Create projects"
+authors = ["The Text2Create Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/ensarsnr/Text2Create"
+publish = false
+edition = "2024"
+rust-version = "1.90"
+
+# This crate must not depend on Tauri. CI verifies this.
+[dependencies]
+# `bundled` builds SQLite 3.54.1 from source (libsqlite3-sys 0.39.x), which
+# includes the fix for RUSTSEC-2026-0459; the system SQLite version is not
+# controlled. Default features (statement cache, wasm) are not needed.
+rusqlite = { version = "0.41.1", default-features = false, features = ["bundled"] }
+text2create-ir = { path = "../text2create-ir" }
+thiserror = "2.0.21"
+
+[dev-dependencies]
+uuid = "1.29.3"

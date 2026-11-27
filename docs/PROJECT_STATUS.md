@@ -30,8 +30,8 @@ The repository contains documentation, policies, repository tooling, and a minim
 | Area | Status |
 | --- | --- |
 | Product features | Not started |
-| Project IR | v1 specified ([Project IR](PROJECT_IR.md)); model, strict loading, invariants, canonical serialization, and the write path (#43) implemented in the `text2create-ir` crate with tests; not used by the application yet; persistence (#12) not started |
-| Local database (SQLite) | Not integrated |
+| Project IR | v1 specified ([Project IR](PROJECT_IR.md)); model, strict loading, invariants, canonical serialization, and the write path (#43) implemented in the `text2create-ir` crate with tests; persistence (#12) implemented in the `text2create-store` crate and exposed as Tauri commands, which the frontend does not use or have permission for yet |
+| Local database (SQLite) | One database per project for the Project IR ([ADR-0015](DECISIONS.md#adr-0015-sqlite-library-schema-migrations-and-project-layout)); no task history or settings yet |
 | AI provider integrations | Not started |
 | Engineering tool integrations (KiCad, ngspice, Arduino CLI, ESP-IDF) | Not started; candidates only |
 | Frontend tests | None |
@@ -42,7 +42,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 
 1. Complete the remaining Milestone 1 validation items (background task with progress events and cancellation, tracked in #25).
 2. Collect feedback on the architecture direction, the Project IR concept, and the MVP scope.
-3. Milestone 2: persist the Project IR (#12) on top of the write path (#43).
+3. Milestone 2: project persistence (#12) is in review; next, artifact storage (#13).
 
 ## How to Help Now
 

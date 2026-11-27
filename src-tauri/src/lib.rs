@@ -1,5 +1,10 @@
 //! Text2Create application core.
 
+mod projects;
+
+use std::sync::Mutex;
+use tauri::Manager;
+
 /// Maximum accepted length, in characters, for the demo `greet` input.
 const MAX_NAME_LENGTH: usize = 100;
 
@@ -25,7 +30,23 @@ fn greet(name: &str) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![greet])
+        .setup(|app| {
+            // ~/Library/Application Support/<bundle identifier>/projects on macOS.
+            let root = app
+                .path()
+                .app_data_dir()?
+                .join(projects::PROJECTS_DIRECTORY);
+            app.manage::<projects::ProjectState>(Mutex::new(projects::ProjectService::new(root)));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            projects::create_project,
+            projects::list_projects,
+            projects::open_project,
+            projects::apply_project_changes,
+            projects::close_project,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Text2Create");
 }

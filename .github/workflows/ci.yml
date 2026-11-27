@@ -129,13 +129,15 @@ jobs:
       - name: Run tests
         working-directory: src-tauri
         run: cargo test --locked --workspace
-      - name: Verify the Project IR crate does not depend on Tauri
+      - name: Verify the core crates do not depend on Tauri
         working-directory: src-tauri
         run: |
-          if cargo tree --locked -p text2create-ir -e normal,build,dev --prefix none --format '{p}' | awk '{print $1}' | grep -i tauri; then
-            echo "::error::text2create-ir must not depend on Tauri (ADR-0014)"
-            exit 1
-          fi
+          for crate in text2create-ir text2create-store; do
+            if cargo tree --locked -p "$crate" -e normal,build,dev --prefix none --format '{p}' | awk '{print $1}' | grep -i tauri; then
+              echo "::error::$crate must not depend on Tauri (ADR-0014, ADR-0015)"
+              exit 1
+            fi
+          done
       - name: Build application bundle
         run: npm run tauri -- build --bundles app --ci
       - name: Verify bundle architecture
