@@ -1,6 +1,6 @@
 # Project IR
 
-> **Status:** v1 specification — **draft, not implemented.** This document specifies the first version of the Project IR data model. Implementation is tracked in [#10](https://github.com/ensarsnr/Text2Create/issues/10). The underlying decisions are [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading), both **Accepted (provisional)** until the implementation confirms them. Decisions taken while specifying v1 are listed under [Specification Decisions](#specification-decisions).
+> **Status:** v1 specification — **draft, implementation in progress.** This document specifies the first version of the Project IR data model. The model, strict loading, invariants, and canonical serialization are implemented in `src-tauri/crates/text2create-ir`; the application does not use it yet. Implementation is tracked in [#10](https://github.com/ensarsnr/Text2Create/issues/10). The underlying decisions are [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading), both **Accepted (provisional)** until the implementation confirms them. Decisions taken while specifying v1 are listed under [Specification Decisions](#specification-decisions).
 
 ## What the Project IR Is
 
@@ -110,8 +110,8 @@ Text and paths are not Unicode-normalized in v1: NFC is neither required nor app
 | --- | --- |
 | `Text<N>` | Non-empty, at most `N` characters, no leading or trailing whitespace, no control characters except line feed |
 | `DomainId` | `[a-z][a-z0-9_]{0,31}`; `core` is reserved |
-| `Kind` | `<domain>.<name>` with one or more `[a-z][a-z0-9_]*` name segments separated by dots, for example `embedded.arduino_cli.compile` |
-| `ProjectPath` | Relative path with `/` separators; rejects absolute paths, empty, `.` and `..` components, backslashes, NUL, and control characters. Filesystem checks (symbolic links, canonicalization) belong to #13. |
+| `Kind` | `<domain>.<name>` with one or more `[a-z][a-z0-9_]*` name segments separated by dots, for example `embedded.arduino_cli.compile`; at most 128 bytes |
+| `ProjectPath` | Relative path with `/` separators, at most 1024 bytes and 255 bytes per component; rejects absolute paths, empty, `.` and `..` components, backslashes, NUL, and control characters. Filesystem checks (symbolic links, canonicalization) belong to #13. |
 | `Digest` | `sha256:` followed by 64 lowercase hexadecimal digits |
 | `Timestamp` | UTC with millisecond precision: `YYYY-MM-DDTHH:MM:SS.mmmZ` |
 | `Decimal` | Canonical decimal string, for example `28` or `-0.5`; rejects `28.0`, `028`, `-0`, and exponents. A shared library type for domain payloads; not used by core records in v1. |
@@ -255,7 +255,7 @@ Loading is the only way to obtain a validated project. The loader never writes t
 2. **Strict JSON parsing:** the input is parsed into a JSON value with a custom parser that rejects:
    - repeated object keys at any depth, including inside domain payloads;
    - non-integer numbers and integers outside the 64-bit range;
-   - nesting deeper than 128 levels;
+   - arrays and objects nested deeper than 127 levels (the recursion limit of the JSON library);
    - trailing data, a byte order mark, and invalid Unicode escapes.
 3. **Version checks:** the `format` and `domains` versions are checked before typed parsing, so that a document from a newer application version produces a precise error.
 4. **Typed parsing:** the document is parsed into Rust types that reject unknown fields and unknown enum values. Typed parsing reads the original bytes again so that errors report a line and column.
