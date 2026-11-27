@@ -72,6 +72,7 @@ impl Project {
         Ok(Self { document })
     }
 
+    /// The validated document.
     pub fn document(&self) -> &ProjectDocument {
         &self.document
     }

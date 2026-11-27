@@ -38,10 +38,12 @@ macro_rules! ids {
             /// The serialized type prefix.
             pub const PREFIX: &'static str = $prefix;
 
+            /// Wraps a UUID. New identifiers are allocated by the application core.
             pub fn from_uuid(uuid: Uuid) -> Self {
                 Self(uuid)
             }
 
+            /// The UUID without the type prefix.
             pub fn uuid(&self) -> Uuid {
                 self.0
             }
@@ -124,6 +126,7 @@ pub enum RecordRef {
 }
 
 impl RecordRef {
+    /// The type of the referenced record.
     pub fn record_type(&self) -> RecordType {
         match self {
             Self::Requirement(_) => RecordType::Requirement,

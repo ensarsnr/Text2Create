@@ -167,6 +167,8 @@ pub struct ModelInvocation {
 
 // -------------------------------------------------------------- Requirements
 
+/// A requirement. Requirements inferred by a model stay `proposed` until the
+/// user confirms them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Requirement {
@@ -181,6 +183,7 @@ pub struct Requirement {
     pub acceptance: Vec<Text<500>>,
 }
 
+/// The kind of a requirement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequirementKind {
@@ -191,6 +194,7 @@ pub enum RequirementKind {
     Safety,
 }
 
+/// The priority of a requirement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Priority {
@@ -216,6 +220,7 @@ pub enum RequirementStatus {
     },
 }
 
+/// Where a requirement came from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RequirementOrigin {
@@ -233,6 +238,8 @@ pub enum RequirementOrigin {
 
 // ------------------------------------------------------------------ Entities
 
+/// A domain object, such as a component or a firmware target. Its payload is
+/// defined by the domain that registers its kind.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Entity {
@@ -260,6 +267,7 @@ pub enum DecisionStatus {
 pub struct Payload(serde_json::Value);
 
 impl Payload {
+    /// The payload as JSON.
     pub fn as_value(&self) -> &serde_json::Value {
         &self.0
     }
@@ -282,6 +290,7 @@ pub struct Artifact {
     pub content: Option<ContentRecord>,
 }
 
+/// Who owns the file an artifact references.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Ownership {
@@ -292,6 +301,7 @@ pub enum Ownership {
     ToolOutput,
 }
 
+/// The last recorded content of an artifact. Immutable.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContentRecord {
@@ -315,6 +325,7 @@ pub struct Link {
 
 // --------------------------------------------------------------------- Plans
 
+/// A plan and the tasks it contains. Completion is derived, not stored.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Plan {
@@ -326,6 +337,7 @@ pub struct Plan {
     pub tasks: Vec<Task>,
 }
 
+/// The user's decision about a plan.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PlanStatus {
@@ -351,6 +363,7 @@ pub struct Task {
     pub disposition: TaskDisposition,
 }
 
+/// Whether a task is still planned. Not an execution status.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TaskDisposition {
@@ -385,6 +398,7 @@ pub struct Subject {
     pub digest: Digest,
 }
 
+/// The outcome of a check.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
@@ -394,6 +408,7 @@ pub enum Outcome {
     Skipped,
 }
 
+/// A message produced by a check.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Diagnostic {
@@ -403,6 +418,7 @@ pub struct Diagnostic {
     pub location: Option<Text<300>>,
 }
 
+/// The severity of a diagnostic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {

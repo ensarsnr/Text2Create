@@ -35,6 +35,7 @@ macro_rules! string_scalar {
             }
         }
         impl $name {
+            /// The validated string.
             pub fn as_str(&self) -> &str {
                 &self.0
             }
@@ -74,6 +75,7 @@ impl<const MAX: usize> From<Text<MAX>> for String {
 }
 
 impl<const MAX: usize> Text<MAX> {
+    /// The validated text.
     pub fn as_str(&self) -> &str {
         &self.0
     }

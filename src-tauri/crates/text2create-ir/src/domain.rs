@@ -209,6 +209,7 @@ impl DomainRegistry {
         Ok(self)
     }
 
+    /// The codec of domain `id`, if it is registered.
     pub fn get(&self, id: &str) -> Option<&dyn DomainCodec> {
         self.domains.get(id).map(|codec| codec.as_ref())
     }
