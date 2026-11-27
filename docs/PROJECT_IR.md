@@ -1,6 +1,6 @@
 # Project IR
 
-> **Status:** v1 specification — **draft, implementation in progress.** This document specifies the first version of the Project IR data model. The model, strict loading, invariants, and canonical serialization are implemented in `src-tauri/crates/text2create-ir`; the application does not use it yet. Implementation is tracked in [#10](https://github.com/ensarsnr/Text2Create/issues/10). The underlying decisions are [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading), both **Accepted (provisional)** until the implementation confirms them. Decisions taken while specifying v1 are listed under [Specification Decisions](#specification-decisions).
+> **Status:** v1 specification — **draft, implementation in progress.** This document specifies the first version of the Project IR data model. The model, strict loading, invariants, canonical serialization, and the [write path](#write-path) are implemented in `src-tauri/crates/text2create-ir`; the application does not use it yet. Implementation is tracked in [#10](https://github.com/ensarsnr/Text2Create/issues/10). The underlying decisions are [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading), both **Accepted (provisional)** until the implementation confirms them. Decisions taken while specifying v1 are listed under [Specification Decisions](#specification-decisions).
 
 ## What the Project IR Is
 
@@ -52,7 +52,7 @@ At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement
 | Typed domain extension interface and a test-only example domain | Electronics domain schema | [#30](https://github.com/ensarsnr/Text2Create/issues/30) |
 | — | Embedded (firmware) domain schema | [#44](https://github.com/ensarsnr/Text2Create/issues/44) |
 | Strict loading, version checks, canonical serialization, invariants | Migrations between versions, backups before migration | [#11](https://github.com/ensarsnr/Text2Create/issues/11) |
-| — | Write path: change sets, operations, provenance creation | [#43](https://github.com/ensarsnr/Text2Create/issues/43); required before #12 |
+| Write path: change sets, operations, provenance creation (see [Write Path](#write-path)) | — | [#43](https://github.com/ensarsnr/Text2Create/issues/43); required before #12 |
 | — | Persistence (SQLite mapping, transactions, single-writer locking) | [#12](https://github.com/ensarsnr/Text2Create/issues/12) |
 | `Digest` value format | Computing content digests, file access, detecting external file changes | [#13](https://github.com/ensarsnr/Text2Create/issues/13) |
 | — | Change journal, undo, rollback | [#14](https://github.com/ensarsnr/Text2Create/issues/14) |
@@ -282,6 +282,44 @@ A loaded project satisfies all of the following:
 12. `TaskRunId` references are not resolved in v1, because task runs are stored outside the IR.
 
 Rules 6–8 are data integrity rules. They prevent, for example, a model-attributed change from confirming a requirement or recording a validation result. They are not an approval workflow, which is defined in #26.
+
+## Write Path
+
+A validated project is obtained only by loading or by creating a new project, and changed only by applying a **change set** ([#43](https://github.com/ensarsnr/Text2Create/issues/43)). The project has no other mutators.
+
+A change set contains the records the change was derived from (`inputs`) and an ordered list of typed operations. It contains no actor, no identifiers of new records, and no timestamps. A change set that comes from outside Text2Create's own code, for example from a model response, is parsed with the strict JSON parser.
+
+**Source.** The source of a change is chosen by the trusted Rust code that knows where the change comes from, through one constructor per source: user edit, user import, model interpretation, model task run, tool task run, or system import. A source cannot be deserialized, so frontend command arguments, change sets, and model output cannot set the actor. The task of a task-run source must exist.
+
+**Applying.** A change set is applied all or nothing:
+
+1. The operations are applied in order to a copy of the project.
+2. The core allocates the identifier of every new record and of one provenance record for the change set, and its timestamp, through injected identifier and clock interfaces.
+3. The core maintains `rev`, `created`, `modified`, and every `by` field. A record changed by a change set gets one new revision, whatever the number of operations.
+4. Entity payloads are normalized by their domain codecs, and the copy must pass the same checks as a loaded project, including every [invariant](#invariants).
+5. Only then does the copy replace the project. On any error the project is unchanged.
+
+Provenance records are only appended. An approval check (#26) can inspect the source and the change set before they are applied.
+
+**Operations:**
+
+| Record | Operations |
+| --- | --- |
+| Project | `set_project_info`, `declare_domain` (at the version of the running build) |
+| Requirements | `add_requirement` (`proposed`), `edit_requirement`, `decide_requirement` (confirm or reject), `supersede_requirement` |
+| Entities | `add_entity` (`proposed`), `edit_entity`, `decide_entity` (accept or reject) |
+| Artifacts | `add_artifact` (without content), `record_artifact_content` |
+| Links | `add_link` |
+| Plans and tasks | `add_plan` (`draft`, with its tasks), `decide_plan` (approve a draft, or archive), `set_task_disposition` (skip or cancel an active task) |
+| Validation results | `record_validation` |
+
+**Rules:**
+
+- Decision operations (`decide_*`, `supersede_requirement`, `set_task_disposition`) are accepted only from the user. `record_validation` is accepted only from a tool or the system.
+- Only the user can edit a requirement or entity that is no longer `proposed`; the decision is kept. Superseded requirements cannot be edited or decided again. A plan can be approved only as a draft, archived plans are final, and only active tasks of plans that are not archived can be skipped or cancelled.
+- A new record can be given a temporary reference so that later operations of the same change set can refer to it. Temporary references must be declared before they are used, declared only once, used at least once, and refer to the expected record type. References inside domain payloads must use identifiers of existing records.
+- Inputs must reference existing records. A change set without operations is rejected.
+- v1 has no operations that remove records.
 
 ## Unknown Data and Versions
 

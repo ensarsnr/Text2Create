@@ -267,6 +267,11 @@ pub enum DecisionStatus {
 pub struct Payload(serde_json::Value);
 
 impl Payload {
+    /// Wraps a payload produced by a domain codec.
+    pub(crate) fn from_normalized(value: serde_json::Value) -> Self {
+        Self(value)
+    }
+
     /// The payload as JSON.
     pub fn as_value(&self) -> &serde_json::Value {
         &self.0
