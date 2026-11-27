@@ -1,10 +1,10 @@
 # Project IR
 
-> **Status:** Concept. No schema has been designed or implemented. This document explains the idea and the requirements it should satisfy so that a schema can be designed in [Milestone 2](ROADMAP.md).
+> **Status:** v1 specification — **draft, not implemented.** This document specifies the first version of the Project IR data model. Implementation is tracked in [#10](https://github.com/ensarsnr/Text2Create/issues/10). The underlying decisions are [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading), both **Accepted (provisional)** until the implementation confirms them. Items that still need a decision are listed under [Open Decisions](#open-decisions).
 
 ## What the Project IR Is
 
-The Project IR (Project Intermediate Representation) is the durable, structured state of a Text2Create project. It records what the project is, what it contains, how its parts relate to each other, what work is planned or done, and how each result was produced and verified.
+The Project IR (Project Intermediate Representation) is the durable, structured state of a Text2Create project. It records what the project is, what it contains, how its parts relate to each other, what work is planned, and how each result was produced and verified.
 
 It is the shared source of truth for the user interface, the task orchestrator, the AI provider layer, the tool adapters, and the validation engine.
 
@@ -20,28 +20,7 @@ Chat history is a poor foundation for real projects:
 
 The Project IR keeps conversation as an input and records its outcomes as structured data. A model can be given a focused, relevant slice of the IR instead of an entire conversation.
 
-## Potential Elements
-
-The following elements are candidates for the IR. They are not a schema, and the final design may merge, split, or drop some of them.
-
-| Element | Purpose |
-| --- | --- |
-| Project metadata | Name, description, domain, creation date, schema version, settings |
-| Requirements | User goals and constraints, including clarifications and their sources |
-| Artifacts | References to files and generated outputs, with type, location, and version |
-| Entities | Domain objects such as components, nets, modules, parts, or functions |
-| Relationships | Typed links between entities and artifacts, for example "component U1 is placed in schematic S" |
-| Task plans | Structured plans with tasks, status, inputs, and expected outputs |
-| Dependencies | Ordering and data dependencies between tasks and artifacts |
-| Provenance | Which request, plan, model, prompt, tool, and approval produced each change |
-| Validation results | Checks performed, their outcomes, and the artifact versions they apply to |
-| Schema versions | Version of the IR schema used by the project, to support migrations |
-| Change history | An ordered record of changes to the IR |
-| Rollback support | The ability to restore the IR and related artifacts to an earlier state |
-
 ## Design Requirements
-
-Whatever schema is eventually chosen should satisfy these requirements:
 
 1. **Durable:** stored locally and survives application restarts and upgrades.
 2. **Versioned schema:** every project records its schema version, and migrations are explicit and tested.
@@ -54,13 +33,387 @@ Whatever schema is eventually chosen should satisfy these requirements:
 9. **Model-friendly:** relevant parts of the IR can be serialized into compact, structured context for AI models.
 10. **Safe against untrusted input:** content originating from models, files, or external sources is validated before it is written into the IR.
 
+At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement 1 depends on persistence ([#12](https://github.com/ensarsnr/Text2Create/issues/12)). Requirement 4 is addressed for the current state only (see [Provenance](#provenance)); full history and requirement 6 depend on the change journal ([#14](https://github.com/ensarsnr/Text2Create/issues/14)). Requirement 9 is addressed by a separate context projection in Milestone 3.
+
+## Principles
+
+- **Logical model independent of storage.** The IR is a single logical document that is loaded, validated, and reasoned about as a whole. How it is stored (SQLite, files) is decided separately in [#12](https://github.com/ensarsnr/Text2Create/issues/12). The model contains no storage concepts such as row IDs.
+- **Rust types are the source of truth.** The schema is defined by Rust types in the application core. A JSON Schema, if needed (for example for model structured output or frontend types), is generated from them, never maintained by hand.
+- **Compiled-in, versioned domains.** Domain-specific content is defined by domain codecs compiled into the application. There is no runtime loading of third-party schemas.
+- **Strict loading.** Data that cannot be fully validated is rejected, never partially accepted, and never written back.
+- **No floating-point numbers.** Numbers in the IR are integers. Exact non-integer values are decimal strings.
+- **Planned work is not execution.** The IR stores plans and tasks. Execution attempts (task runs) and logs are stored outside the IR ([#27](https://github.com/ensarsnr/Text2Create/issues/27)).
+
+## Scope of v1
+
+| Included in v1 | Not in v1 | Tracked in |
+| --- | --- | --- |
+| Project information, requirements, entities, artifacts, links, plans and tasks, validation results, provenance records | — | [#10](https://github.com/ensarsnr/Text2Create/issues/10) |
+| Typed domain extension interface and a test-only example domain | Electronics domain schema | [#30](https://github.com/ensarsnr/Text2Create/issues/30) |
+| — | Embedded (firmware) domain schema | Not yet tracked |
+| Strict loading, version checks, canonical serialization, invariants | Migrations between versions, backups before migration | [#11](https://github.com/ensarsnr/Text2Create/issues/11) |
+| — | Write path: change sets, operations, provenance creation | Not yet tracked; required before #12 |
+| — | Persistence (SQLite mapping, transactions, single-writer locking) | [#12](https://github.com/ensarsnr/Text2Create/issues/12) |
+| `Digest` value format | Computing content digests, file access, detecting external file changes | [#13](https://github.com/ensarsnr/Text2Create/issues/13) |
+| — | Change journal, undo, rollback | [#14](https://github.com/ensarsnr/Text2Create/issues/14) |
+| `TaskRunId` as a reference type | Task runs, execution status, logs, timeouts | [#25](https://github.com/ensarsnr/Text2Create/issues/25), [#27](https://github.com/ensarsnr/Text2Create/issues/27) |
+| User-only decision fields (see [Invariants](#invariants)) | Approval workflow and approval records | [#26](https://github.com/ensarsnr/Text2Create/issues/26) |
+
+## Document Structure
+
+A Project IR document is a JSON object with exactly these fields, in this order:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `format` | object | `{ "schema": "text2create.project-ir", "version": 1 }` |
+| `domains` | array | Domains used by the project: `{ "id", "version" }`, sorted by `id`. The built-in `core` domain is implied by `format` and not listed. |
+| `project` | object | Project information |
+| `provenance` | array | Provenance records |
+| `requirements` | array | Requirements |
+| `entities` | array | Domain entities |
+| `artifacts` | array | Artifact references |
+| `links` | array | Typed links between records |
+| `plans` | array | Plans, each containing its tasks |
+| `validations` | array | Validation results |
+
+Every record collection is an array sorted by record ID. Arrays are used instead of objects keyed by ID because a JSON object with a repeated key would otherwise silently keep only the last value.
+
+## Identifiers
+
+- Every record has a stable identifier: a type prefix, an underscore, and a UUID in lowercase hyphenated form, for example `req_01a21c90-0000-7000-8000-000000000011`.
+- New identifiers are UUIDv7 (time-ordered, RFC 9562). Loading accepts any UUID in canonical form.
+- Identifiers are allocated by the application core. Models and the frontend never choose identifiers.
+- Each record type has its own Rust type, so an artifact ID cannot be used where a requirement ID is expected.
+
+| Prefix | Record |
+| --- | --- |
+| `prj` | Project |
+| `prv` | Provenance record |
+| `req` | Requirement |
+| `ent` | Entity |
+| `art` | Artifact |
+| `lnk` | Link |
+| `pln` | Plan |
+| `tsk` | Task |
+| `val` | Validation result |
+| `run` | Task run (reference only; stored outside the IR) |
+
+A record reference (`RecordRef`) is serialized as the prefixed identifier; the prefix determines the record type.
+
+## Scalar Types
+
+Scalar values are validated by rejecting invalid input, never by silently normalizing it. This keeps loading and saving exact.
+
+| Type | Format |
+| --- | --- |
+| `Text<N>` | Non-empty, at most `N` characters, no leading or trailing whitespace, no control characters except line feed |
+| `DomainId` | `[a-z][a-z0-9_]{0,31}`; `core` is reserved |
+| `Kind` | `<domain>.<name>` with one or more `[a-z][a-z0-9_]*` name segments separated by dots, for example `embedded.arduino_cli.compile` |
+| `ProjectPath` | Relative path with `/` separators; rejects absolute paths, empty, `.` and `..` components, backslashes, NUL, and control characters. Filesystem checks (symbolic links, canonicalization) belong to #13. |
+| `Digest` | `sha256:` followed by 64 lowercase hexadecimal digits |
+| `Timestamp` | UTC with millisecond precision: `YYYY-MM-DDTHH:MM:SS.mmmZ` |
+| `Decimal` | Canonical decimal string, for example `28` or `-0.5`; rejects `28.0`, `028`, `-0`, and exponents. A shared library type for domain payloads; not used by core records in v1. |
+
+## Records
+
+### Project Information
+
+`project`: `id`, `provenance`, `name` (`Text<120>`), `description` (`Text<2000>` or `null`).
+
+### Provenance
+
+Provenance records describe how the **current state** of the project came to be. They are separate from the change journal ([#14](https://github.com/ensarsnr/Text2Create/issues/14)), which will record full history and reference provenance records by ID instead of duplicating them.
+
+A provenance record has:
+
+| Field | Description |
+| --- | --- |
+| `id` | `prv_…` |
+| `at` | `Timestamp` |
+| `actor` | `user`, `model` (`provider`, `model`), `tool` (`name`, `version`), or `system` (`component`) |
+| `activity` | `user_edit`, `interpretation` (a model turned user input into structured records), `task_run` (`task`, `run`), `import`, or `migration` (`from`, `to`) |
+| `inputs` | Records the change was derived from: `{ "record", "rev", "digest" }`, pinned to a revision or content digest where known |
+| `model` | For model involvement: digests of the prompt and the response, or `null` |
+
+Mutable records carry `provenance: { "rev", "created", "modified" }`. `rev` starts at 1 and increases with each modification. `created` and `modified` reference provenance records. Decisions (for example a confirmed requirement) carry their own `by` reference. Immutable records (validation results, artifact content records) reference a single provenance record.
+
+The actor is assigned by the trusted Rust layer that knows where a change comes from. It is never taken from frontend or model input.
+
+### Requirements
+
+| Field | Description |
+| --- | --- |
+| `kind` | `functional`, `performance`, `constraint`, `interface`, `safety` |
+| `priority` | `must`, `should`, `could` |
+| `status` | `proposed`; `confirmed` (`by`); `rejected` (`by`); `superseded` (`replacement`, `by`) |
+| `title`, `statement` | `Text<120>`, `Text<2000>` |
+| `origin` | `user` (`quote`); `clarification` (`question`, `answer`); `inferred` (`rationale`) |
+| `acceptance` | Acceptance criteria, `Text<500>` each |
+
+Requirements inferred by a model are `proposed` until the user confirms them. Only confirmed requirements can be addressed by tasks.
+
+The core has no quantity or unit type. Requirement statements are human-readable text. Machine-checkable values (for example a temperature threshold) belong to typed domain entities linked to the requirement, because unit semantics differ between domains.
+
+### Entities
+
+Domain objects such as components, nets, or firmware targets.
+
+| Field | Description |
+| --- | --- |
+| `kind` | A `Kind` registered as an entity kind by its domain |
+| `name` | `Text<120>` |
+| `status` | `proposed`; `accepted` (`by`); `rejected` (`by`) |
+| `data` | Domain payload, validated and normalized by the domain codec |
+
+### Artifacts
+
+References to files in the project directory. The file content is never stored in the IR.
+
+| Field | Description |
+| --- | --- |
+| `kind` | A registered artifact kind, for example `core.document` |
+| `path` | `ProjectPath` |
+| `ownership` | `generated` (managed by Text2Create), `user` (never overwritten without approval), `tool_output` |
+| `content` | `{ "digest", "size_bytes", "provenance" }` for the last recorded content, or `null` if the file has not been produced yet |
+
+### Links
+
+Typed links for traceability across records and domains: `kind`, `from`, `to`. Core link kinds:
+
+| Kind | From | To |
+| --- | --- | --- |
+| `core.satisfies` | Entity, Artifact | Requirement |
+| `core.derived_from` | Requirement, Entity, Artifact | Requirement, Entity, Artifact |
+| `core.describes` | Artifact | Entity |
+| `core.refines` | Requirement | Requirement |
+
+Domains can register additional link kinds with allowed endpoint types. Internal domain structure (for example electrical connections) belongs in domain payloads, not in generic links.
+
+### Plans and Tasks
+
+A plan has `goal`, `status` (`draft`; `approved` (`by`); `archived` (`by`)), and `tasks`.
+
+A task describes planned work only:
+
+| Field | Description |
+| --- | --- |
+| `title` | `Text<200>` |
+| `action` | A registered action kind, for example `embedded.arduino_cli.compile` |
+| `depends_on` | Tasks in the same plan; must be acyclic |
+| `inputs` | Record references |
+| `expected_outputs` | Artifact IDs |
+| `addresses` | Confirmed requirement IDs |
+| `disposition` | `active`; `skipped` (`by`); `cancelled` (`by`) |
+
+Tasks have no execution status. Whether a task is running, succeeded, or failed is derived from its task runs, which are stored outside the IR. A completed plan is likewise derived, not stored.
+
+### Validation Results
+
+Immutable records of a check that ran against exact artifact contents.
+
+| Field | Description |
+| --- | --- |
+| `provenance` | A provenance record whose actor is a tool or the system; the tool name and version are recorded there |
+| `check` | A registered check kind |
+| `subjects` | `{ "artifact", "digest" }`: the exact content that was checked |
+| `requirements` | Requirements the check relates to |
+| `outcome` | `passed`, `failed`, `error`, `skipped` |
+| `summary` | `Text<500>` |
+| `diagnostics` | At most 200 entries: `severity` (`error`, `warning`, `info`), `message`, `location` |
+
+A validation result is **stale** when any subject digest differs from the artifact's current content digest. Staleness is computed, never stored.
+
+## Domain Extensions
+
+A domain is a Rust type implementing a domain codec interface, compiled into the application and registered at startup. A domain declares:
+
+- its identifier and schema version;
+- the entity, artifact, action, and check kinds it defines;
+- link rules (kind name and allowed endpoint record types);
+- for each entity kind, a typed Rust payload structure that rejects unknown fields.
+
+The core treats payloads as opaque until the domain codec has processed them. For every entity, the codec decodes the payload into its Rust type, validates it, encodes it again, and reports any record IDs it contains. The core then requires that:
+
+- the re-encoded payload equals the stored payload (stored payloads are always in canonical form);
+- every reported record ID exists.
+
+Domains evolve independently: each has its own version, and its payload migrations are part of the domain ([#11](https://github.com/ensarsnr/Text2Create/issues/11)). A test-only example domain demonstrates the interface in #10.
+
+## Loading Pipeline
+
+Loading is the only way to obtain a validated project. The loader never writes to the source.
+
+1. **Size limit:** documents larger than 16 MiB are rejected.
+2. **Strict JSON parsing:** the input is parsed into a JSON value with a custom parser that rejects:
+   - repeated object keys at any depth, including inside domain payloads;
+   - non-integer numbers and integers outside the 64-bit range;
+   - nesting deeper than 128 levels;
+   - trailing data, a byte order mark, and invalid Unicode escapes.
+3. **Version checks:** the `format` and `domains` versions are checked before typed parsing, so that a document from a newer application version produces a precise error.
+4. **Typed parsing:** the document is parsed into Rust types that reject unknown fields and unknown enum values. Typed parsing reads the original bytes again so that errors report a line and column.
+5. **Payload normalization:** each entity payload is processed by its domain codec, as described above.
+6. **Invariant checks:** see [Invariants](#invariants).
+
+Repeated keys must be rejected before conversion to a JSON value because the conversion itself silently keeps only the last value. Data that does not come from Text2Create's own serializer (project files, imports, model responses, tool output) must go through this parser. Frontend command arguments are parsed by Tauri before they reach application code, so this check does not apply to them. JavaScript's `JSON.stringify` cannot produce repeated keys.
+
+## Invariants
+
+A loaded project satisfies all of the following:
+
+1. Record IDs are unique within each collection, and collections are sorted by ID. Task IDs are unique across all plans. `domains` is sorted and unique.
+2. Every reference resolves: link endpoints, task dependencies, inputs, outputs, and addressed requirements, validation subjects, provenance inputs, superseding requirements, and references inside domain payloads.
+3. Every kind is registered for its use (entity, artifact, action, check, or link) by a domain that is listed in `domains` or is `core`.
+4. Link endpoints have record types allowed by the link rule.
+5. Task dependencies stay within their plan and are acyclic.
+6. Tasks address only confirmed requirements.
+7. Every `by` field (confirmed, rejected, superseded, accepted, approved, archived, skipped, cancelled) references a provenance record whose actor is the user.
+8. Validation results reference a provenance record whose actor is a tool or the system.
+9. Every provenance record is referenced by the current state (no orphans). *(Depends on open decision 1.)*
+10. `rev` is at least 1.
+11. Entity payloads are in canonical form.
+12. `TaskRunId` references are not resolved in v1, because task runs are stored outside the IR.
+
+Rules 6–8 are data integrity rules. They prevent, for example, a model-attributed change from confirming a requirement or recording a validation result. They are not an approval workflow, which is defined in #26.
+
+## Unknown Data and Versions
+
+Data is never silently discarded, and data that could not be fully validated is never written.
+
+| Situation | Behavior |
+| --- | --- |
+| Unknown field, in the core or in a domain payload | Rejected |
+| Unknown enum value | Rejected |
+| Repeated key, non-integer number, out-of-range integer | Rejected during strict parsing |
+| Payload not in canonical form | Rejected (indicates an external edit or a bug) |
+| Domain not available in this build | Rejected; the file is not modified |
+| Format or domain version newer than supported | Rejected; the file is not modified |
+| Format or domain version older than supported | Migrated after a backup ([#11](https://github.com/ensarsnr/Text2Create/issues/11)); rejected until migrations exist |
+
+There is no mechanism that preserves unknown fields and writes them back, because it would let unvalidated data persist in the IR. Opening a project from a newer version read-only may be added later.
+
+## Canonical Serialization
+
+The same project state always serializes to the same bytes:
+
+- struct fields in declaration order; domain payload keys sorted;
+- record collections sorted by ID;
+- no maps keyed by ID, no hash-ordered collections, no floating-point numbers;
+- UTF-8, two-space indentation, LF line endings, one trailing newline.
+
+Fixtures are compared byte for byte. These comparisons also detect dependency changes that would alter JSON output (for example `serde_json` features enabled elsewhere in the dependency tree).
+
+## Security Considerations
+
+- **Untrusted content:** text in the IR is data, never instructions. Model context must show where each record came from and whether it was confirmed.
+- **Resource limits:** document size, nesting depth, text lengths, and diagnostics per result are bounded.
+- **Paths:** artifact paths are validated lexically in the IR and again against the filesystem when files are accessed (#13).
+- **Identifiers:** allocated by the core, so input cannot create collisions or overwrite existing records.
+- **Secrets:** API keys and credentials are never stored in the IR. Prompts and model responses are referenced by digest.
+- **Irreversible actions:** rolling back the IR does not undo effects outside it, such as flashing firmware to a device (#14, #39).
+
+## Example
+
+An excerpt of an illustrative project for the first workflow (ESP32 climate fan controller), in canonical form. Only the target board, ESP32 DevKit V1, is a confirmed choice. The sensor, its wiring, and the firmware target identifier are illustrative and remain `proposed`; the reference specification is defined in [#31](https://github.com/ensarsnr/Text2Create/issues/31). The `electronics` and `embedded` payloads only illustrate the shape; their schemas are not designed yet.
+
+```json
+{
+  "format": {
+    "schema": "text2create.project-ir",
+    "version": 1
+  },
+  "domains": [
+    {
+      "id": "electronics",
+      "version": 1
+    },
+    {
+      "id": "embedded",
+      "version": 1
+    }
+  ],
+  "provenance": [
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000003",
+      "at": "2026-11-27T10:05:00.000Z",
+      "actor": {
+        "type": "user"
+      },
+      "activity": {
+        "type": "user_edit"
+      },
+      "inputs": [],
+      "model": null
+    }
+  ],
+  "requirements": [
+    {
+      "id": "req_01a21c90-0000-7000-8000-000000000014",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "kind": "constraint",
+      "priority": "must",
+      "status": {
+        "state": "confirmed",
+        "by": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "title": "Use an ESP32 DevKit V1 board",
+      "statement": "The controller is an ESP32 DevKit V1 development board.",
+      "origin": {
+        "type": "user",
+        "quote": "My board is an ESP32 DevKit V1."
+      },
+      "acceptance": []
+    }
+  ],
+  "entities": [
+    {
+      "id": "ent_01a21c90-0000-7000-8000-000000000022",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000002"
+      },
+      "kind": "electronics.component",
+      "name": "U2 temperature and humidity sensor",
+      "status": {
+        "state": "proposed"
+      },
+      "data": {
+        "designator": "U2",
+        "interface": "i2c",
+        "part": "SHT31 breakout (illustrative)",
+        "role": "sensor"
+      }
+    }
+  ]
+}
+```
+
+The excerpt omits the remaining fields and records. A complete document must contain every top-level field and pass every invariant.
+
+## Open Decisions
+
+The specification currently assumes the first option in each row. These must be confirmed before or during the #10 implementation.
+
+| # | Decision | Current assumption | Alternative |
+| --- | --- | --- | --- |
+| 1 | Provenance retention before the journal (#14) exists | Keep only provenance referenced by the current state; intermediate modification history is lost until #14 | Keep all provenance records (append-only); the document grows without bound |
+| 2 | Decision status on entities | Entities have `status` (`proposed`, `accepted`, `rejected`) | No status; rely on provenance only |
+| 3 | Write path (change sets, operations, provenance creation) | A separate issue, completed before #12 | Part of #10 |
+| 4 | Code location | A separate crate without a Tauri dependency, as a workspace member under `src-tauri/` | A module inside the existing application crate |
+| 5 | Projects from newer versions | Rejected in v1 | Read-only viewing |
+| 6 | Unicode normalization of text and paths | Not enforced in v1 | Require or apply NFC |
+| 7 | Embedded (firmware) domain schema | Needs its own issue | Include in #30 |
+
 ## Open Questions
 
-- Should the IR be primarily relational (SQLite tables), document-based (JSON documents stored in SQLite), or a hybrid?
-- How should domain-specific entity types be defined and validated (for example JSON Schema, Rust types, or both)?
-- How fine-grained should change history be: per field, per entity, or per operation?
-- How should rollback interact with external files and with actions that cannot be reversed (for example flashing firmware to a device)?
-- How should the IR detect and reconcile changes made to artifacts outside Text2Create?
-- What is the minimum IR needed for the first engineering workflow in Milestone 5?
+These remain open and belong to later issues:
 
-These questions are tracked in the [Decision Log](DECISIONS.md) and should be answered with small prototypes before a schema is finalized.
+- How fine-grained should change history be: per field, per record, or per change set? ([#14](https://github.com/ensarsnr/Text2Create/issues/14))
+- How should rollback interact with external files and with actions that cannot be reversed, such as flashing firmware? ([#14](https://github.com/ensarsnr/Text2Create/issues/14), [#39](https://github.com/ensarsnr/Text2Create/issues/39))
+- How should the IR detect and reconcile changes made to artifacts outside Text2Create? ([#13](https://github.com/ensarsnr/Text2Create/issues/13))
+- Is SQLite or a set of version-control-friendly text files the authoritative on-disk format? ([#12](https://github.com/ensarsnr/Text2Create/issues/12))
+- Where should cross-domain numeric constraints (for example budget or timing) live, given that the core has no unit type?

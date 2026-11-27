@@ -30,12 +30,13 @@ This log records architecture and project decisions using lightweight Architectu
 | [ADR-0005](#adr-0005-rust-for-the-application-core) | Rust for the application core | Accepted (provisional) |
 | [ADR-0006](#adr-0006-sqlite-for-local-persistence) | SQLite for local persistence | Accepted (provisional) |
 | [ADR-0007](#adr-0007-hybrid-ai-provider-adapter-layer) | Hybrid AI provider adapter layer | Accepted (provisional) |
-| [ADR-0008](#adr-0008-structured-project-state-through-a-project-ir) | Structured project state through a Project IR | Proposed |
+| [ADR-0008](#adr-0008-structured-project-state-through-a-project-ir) | Structured project state through a Project IR | Accepted (provisional) |
 | [ADR-0009](#adr-0009-macos-as-the-initial-target-platform) | macOS as the initial target platform | Accepted |
 | [ADR-0010](#adr-0010-monolithic-single-orchestrator-architecture) | Monolithic, single-orchestrator architecture | Accepted |
 | [ADR-0011](#adr-0011-explicit-approval-for-consequential-operations) | Explicit approval for consequential operations | Accepted |
 | [ADR-0012](#adr-0012-vite-and-npm-for-the-frontend-toolchain) | Vite and npm for the frontend toolchain | Accepted |
 | [ADR-0013](#adr-0013-application-bundle-identifier) | Application bundle identifier | Accepted (provisional) |
+| [ADR-0014](#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading) | Project IR schema definition, domain extensions, and strict loading | Accepted (provisional) |
 
 ---
 
@@ -142,14 +143,30 @@ This log records architecture and project decisions using lightweight Architectu
 
 ## ADR-0008: Structured project state through a Project IR
 
-- **Status:** Proposed
-- **Date:** 2026-11-26
+- **Status:** Accepted (provisional)
+- **Date:** 2026-11-26 (proposed), 2026-11-27 (revised and accepted provisionally)
 
-**Context:** Chat history is not a reliable foundation for project state. See [PROJECT_IR.md](PROJECT_IR.md).
+**Context:** Chat history is not a reliable foundation for project state. See [PROJECT_IR.md](PROJECT_IR.md). The original proposal left the storage model, the schema definition approach, change history granularity, and rollback semantics open.
 
-**Proposal:** Represent project state as a durable, versioned, structured Project IR that serves as the source of truth for the UI, orchestrator, tools, and validation.
+**Decision:** Represent project state as a durable, versioned, structured Project IR that serves as the source of truth for the UI, orchestrator, tools, and validation. Specifically:
 
-**Open:** storage model (relational, document, or hybrid), schema definition approach, change history granularity, and rollback semantics. To be resolved in Milestone 2.
+- **Logical model:** the IR is a single document (an aggregate of typed records with stable identifiers and references) that is loaded, validated, and checked for invariants as a whole.
+- **Persistence is separate:** the logical model does not depend on how it is stored. The physical layout is decided in [#12](https://github.com/ensarsnr/Text2Create/issues/12); SQLite remains the preferred store ([ADR-0006](#adr-0006-sqlite-for-local-persistence)).
+- **Records:** project information, requirements, entities, artifacts, links, plans with tasks, validation results, and provenance records. Native tool files stay authoritative for their content; artifacts reference them by path and content digest.
+- **Provenance is separate from history:** provenance records in the document describe how the current state came to be. A change journal for full history and rollback is a separate component ([#14](https://github.com/ensarsnr/Text2Create/issues/14)) that references provenance records instead of duplicating them.
+- **Planned work is separate from execution:** tasks describe planned work only. Task runs, execution status, and logs are stored outside the IR ([#27](https://github.com/ensarsnr/Text2Create/issues/27)).
+
+The schema definition approach is decided in [ADR-0014](#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading).
+
+**Alternatives considered:**
+
+- **Normalized relational model as the logical model** (a table per record type and domain): every domain change becomes a SQL migration, and the expected project sizes do not need relational queries.
+- **Generic property graph** (nodes, edges, and property bags): loses type safety, scatters domain structures such as netlists across many edges, and widens the surface for unvalidated model output.
+- **Event sourcing with the log as the source of truth:** old events must remain replayable forever, which makes migrations the hardest kind, and files edited outside Text2Create cannot be represented as events.
+
+**Validation required:** the #10 implementation must confirm the model with committed fixtures, byte-identical round trips, and invariant tests, including an illustrative ESP32 project.
+
+**Consequences:** the whole project is held in memory, which is expected to be acceptable for single-user local projects of hundreds to a few thousand records. Until the journal exists, intermediate modification history is not retained. Change history granularity and rollback semantics remain open and belong to #14.
 
 ---
 
@@ -218,6 +235,34 @@ This log records architecture and project decisions using lightweight Architectu
 
 ---
 
+## ADR-0014: Project IR schema definition, domain extensions, and strict loading
+
+- **Status:** Accepted (provisional)
+- **Date:** 2026-11-27
+
+**Context:** [ADR-0008](#adr-0008-structured-project-state-through-a-project-ir) defines what the Project IR contains. The IR must support many domains (electronics, embedded systems, robotics, CAD) without making the shared core complex, and it receives untrusted input from models, files, and tools.
+
+**Decision:**
+
+- **Rust types are the source of truth.** Core records are closed Rust types that reject unknown fields. Any JSON Schema is generated from these types, never maintained by hand. There is no runtime JSON Schema validation.
+- **Compiled-in, versioned domain codecs.** Each domain is a Rust codec with its own identifier and version, compiled into the application. Domain payloads are decoded into typed Rust structures, validated, and re-encoded; stored payloads must equal their re-encoded form. Domains report the record identifiers their payloads contain so that the core can enforce referential integrity. Third-party schema loading remains a non-goal ([Architecture](ARCHITECTURE.md#non-goals-for-now)).
+- **Strict loading.** Input is parsed with a strict JSON parser that rejects repeated object keys at any depth, non-integer numbers, and out-of-range integers before conversion into JSON values. Version checks run before typed parsing.
+- **Unknown data is rejected, not preserved.** Unknown fields, unknown enum values, unavailable domains, and newer format or domain versions cause loading to fail without modifying the file. Older versions are migrated after a backup ([#11](https://github.com/ensarsnr/Text2Create/issues/11)). There is no mechanism that carries unknown data through a save.
+- **No floating-point numbers and no core unit type.** Exact non-integer values are canonical decimal strings. Units and their semantics belong to domains.
+- **Canonical serialization.** The same state always produces the same bytes, and fixtures are compared byte for byte.
+
+**Alternatives considered:**
+
+- **One closed Rust type tree containing all domains:** strongest compile-time checks, but every domain change becomes a core schema change, and the core accumulates every domain's dependencies.
+- **Runtime JSON Schema per domain:** domains could be added without code, but invariants beyond structure still need Rust code, which creates two validation layers, and Rust code loses type safety.
+- **Preserving unknown fields on save:** avoids data loss when an older application opens a newer file, but lets unvalidated data persist in the IR. Rejecting the file achieves the same goal of not losing data.
+
+**Validation required:** the #10 implementation must demonstrate the domain interface with a test-only domain and must include negative tests for every rejection rule in [PROJECT_IR.md](PROJECT_IR.md).
+
+**Consequences:** domain payloads pass through an untyped boundary between the core and the domain codec, which must be covered by tests. Opening a project created by a newer application version fails until the application is updated. Adding a domain requires a new application release. Specification details and open decisions are in [PROJECT_IR.md](PROJECT_IR.md).
+
+---
+
 ## Open Questions
 
 These questions do not yet have ADRs. They should be resolved through discussion or prototypes, then recorded as ADRs.
@@ -226,7 +271,7 @@ These questions do not yet have ADRs. They should be resolved through discussion
 | --- | --- | --- |
 | Frontend tooling | Which state management and component library? (Build tool decided in ADR-0012.) | 1–2 |
 | Persistence | Which Rust SQLite library and migration approach? One database per project or global? | 1–2 |
-| Project IR | Relational, document, or hybrid model? How are domain types defined? | 2 |
+| Project IR history | Change history granularity and rollback semantics (decided in ADR-0008 and ADR-0014: logical model and schema approach) | 2 |
 | Artifact versioning | Git, content-addressed storage, or snapshots? | 2 |
 | Secrets | macOS Keychain integration approach | 3 |
 | Provider interface | How to handle capability differences across providers? | 3 |
