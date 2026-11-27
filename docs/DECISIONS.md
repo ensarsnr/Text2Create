@@ -38,6 +38,7 @@ This log records architecture and project decisions using lightweight Architectu
 | [ADR-0013](#adr-0013-application-bundle-identifier) | Application bundle identifier | Accepted (provisional) |
 | [ADR-0014](#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading) | Project IR schema definition, domain extensions, and strict loading | Accepted (provisional) |
 | [ADR-0015](#adr-0015-sqlite-library-schema-migrations-and-project-layout) | SQLite library, schema migrations, and project layout | Accepted (provisional) |
+| [ADR-0016](#adr-0016-project-ir-error-locations-and-versioned-migrations) | Project IR error locations and versioned migrations | Accepted (provisional) |
 
 ---
 
@@ -248,7 +249,7 @@ The schema definition approach is decided in [ADR-0014](#adr-0014-project-ir-sch
 - **Rust types are the source of truth.** Core records are closed Rust types that reject unknown fields. Any JSON Schema is generated from these types, never maintained by hand. There is no runtime JSON Schema validation.
 - **Compiled-in, versioned domain codecs.** Each domain is a Rust codec with its own identifier and version, compiled into the application. Domain payloads are decoded into typed Rust structures, validated, and re-encoded; stored payloads must equal their re-encoded form. Domains report the record identifiers their payloads contain so that the core can enforce referential integrity. Third-party schema loading remains a non-goal ([Architecture](ARCHITECTURE.md#non-goals-for-now)).
 - **Strict loading.** Input is parsed with a strict JSON parser that rejects repeated object keys at any depth, non-integer numbers, and out-of-range integers before conversion into JSON values. Version checks run before typed parsing.
-- **Unknown data is rejected, not preserved.** Unknown fields, unknown enum values, unavailable domains, and newer format or domain versions cause loading to fail without modifying the file. Older versions are migrated after a backup ([#11](https://github.com/ensarsnr/Text2Create/issues/11)). There is no mechanism that carries unknown data through a save.
+- **Unknown data is rejected, not preserved.** Unknown fields, unknown enum values, unavailable domains, and newer format or domain versions cause loading to fail without modifying the file. Older versions are migrated after a backup ([ADR-0016](#adr-0016-project-ir-error-locations-and-versioned-migrations)). There is no mechanism that carries unknown data through a save.
 - **No floating-point numbers and no core unit type.** Exact non-integer values are canonical decimal strings. Units and their semantics belong to domains.
 - **Canonical serialization.** The same state always produces the same bytes, and fixtures are compared byte for byte.
 
@@ -274,7 +275,7 @@ The schema definition approach is decided in [ADR-0014](#adr-0014-project-ir-sch
 **Decision:**
 
 - **Library:** `rusqlite` with its `bundled` feature, in a separate `text2create-store` crate without a Tauri dependency. The bundled SQLite is built from source, so the SQLite version does not depend on the system. It must be at least 3.54.0 (`libsqlite3-sys` 0.39, `rusqlite` 0.41), which fixes RUSTSEC-2026-0459 for databases opened together with a `-wal` file.
-- **Layout:** one self-contained directory per project, named by its project ID, under `projects/` in the application data directory (`~/Library/Application Support/io.github.ensarsnr.text2create/` on macOS, per ADR-0013). Each directory contains `project.sqlite`. Artifact files will live in the same directory (#13). There is no global database. The project list is built by reading each project database.
+- **Layout:** one self-contained directory per project, named by its project ID, under `projects/` in the application data directory (`~/Library/Application Support/io.github.ensarsnr.text2create/` on macOS, per ADR-0013). Each directory contains `project.sqlite` and, after a Project IR migration, its backups in `backups/` (ADR-0016). Artifact files will live in the same directory (#13). There is no global database. The project list is built by reading each project database.
 - **Storage of the IR:** the database stores the Project IR document in canonical JSON in a single row, together with copies of the project ID, name, and update time for listing. Stored data is written only from the output of the write path and read only through `Project::load`, so every IR validation rule applies. Relational tables can be added later through schema migrations when a feature needs them.
 - **Migrations:** ordered SQL scripts compiled into the application. The schema version is the SQLite `user_version`, and the SQLite `application_id` identifies project databases. Pending migrations run automatically when a project is opened, in one transaction. Databases from a newer schema version, and SQLite files that are not project databases, are refused without modification.
 - **Writes:** WAL mode with `synchronous = FULL`. Each save is one transaction, and the open project changes in memory only after it commits. A revision counter rejects a save from a connection that opened the project before another connection saved it. A new project is written to a staging directory that is renamed into place only after the database has been committed.
@@ -282,6 +283,28 @@ The schema definition approach is decided in [ADR-0014](#adr-0014-project-ir-sch
 **Alternatives considered:** a global database for all projects, which makes projects hard to move and back up; a relational mapping of every IR record, which duplicates the model before any feature needs queries; `sqlx` or `diesel`, which add an async runtime or an ORM with code generation; and the `rusqlite_migration` crate, which adds a dependency for a few lines of code.
 
 **Consequences:** projects can be copied as directories once they are closed. Saving rewrites the whole document, which is acceptable for the expected project sizes (measured in #43). Listing reads every project database. Opening a project from an arbitrary location requires a later change. Concurrent writers are detected but not merged.
+
+---
+
+## ADR-0016: Project IR error locations and versioned migrations
+
+- **Status:** Accepted (provisional)
+- **Date:** 2026-11-27
+
+**Context:** ADR-0014 rejects documents from older format or domain versions until migrations exist, and promises that they will be migrated after a backup ([#11](https://github.com/ensarsnr/Text2Create/issues/11)). Errors must also say where invalid data is, so that the user interface and a model repair loop can point at it. ADR-0014 keeps the Rust types as the only definition of the schema.
+
+**Decision:**
+
+- **No JSON Schema validation.** The Rust types, the domain codecs, and the invariants stay the only validation layer. No schema library is added.
+- **Error locations are JSON Pointers.** Every rejection, from strict parsing to the invariants and domain rules, reports the location of the invalid data as a JSON Pointer (RFC 6901) together with a message that can be shown to the user. Locations are recorded with `serde_path_to_error` only after a parse has failed, by parsing the same input again, so valid input pays nothing for them.
+- **Domain rules.** A domain codec can check project-wide rules (`check_project`) in addition to its payload rules. They run after the core invariants, when loading and on the write path.
+- **Migrations run on the strictly parsed JSON value**, because an older document does not match the current types. Format steps are compiled into the IR crate and run first, in order; each domain then migrates its own payloads one version at a time (`migrate_entity`), and the core normalizes the result with the current codec. Format version 1 is the first version, so there are no format steps yet; the framework is tested with a synthetic older format.
+- **Migrations are recorded and revalidated.** Each step adds a provenance record with the `system` actor (`project-ir` for format steps, `domain:<id>` for domain steps) and a `migration` activity, and is the new `modified` of the records whose data it changed. Existing provenance records are kept. The result must pass the complete loading pipeline. Newer and unknown versions are refused without modification. Migrations are deterministic and use no external services.
+- **Backup before saving.** The store migrates in memory first. Only if that succeeds does it copy the database with SQLite `VACUUM INTO`, which includes committed data still in the WAL file, into `backups/` in the project directory. It then verifies the copy and moves it into place, and saves the migrated document in one transaction. Loading never migrates; opening a project in the application migrates it automatically through this path.
+
+**Alternatives considered:** a JSON Schema library, which would create a second definition of the schema (ADR-0014); hand-written path tracking, which duplicates a small, widely used library; keeping a Rust type tree for every old version, which grows with every release; copying the database file directly, which misses data in the WAL file; the SQLite online backup API, which needs an additional `rusqlite` feature for the same result; and asking for approval before every migration, which ADR-0011 does not require for a change that a verified backup makes reversible.
+
+**Consequences:** callers of `Project::load` handle `LoadError::needs_migration` explicitly. A migrated project cannot be opened by an older build. Backups accumulate in the project directory and are not cleaned up automatically. Domain kinds cannot be renamed by a domain migration; that requires a format step.
 
 ---
 

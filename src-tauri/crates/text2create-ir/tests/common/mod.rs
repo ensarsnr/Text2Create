@@ -10,7 +10,7 @@ use text2create_ir::domain::{
 };
 use text2create_ir::ids::{EntityId, RecordRef, RecordType};
 use text2create_ir::scalar::{Decimal, Text};
-use text2create_ir::{InvariantError, LoadError, Project, Rule};
+use text2create_ir::{FieldPath, InvariantError, LoadError, Project, Rule};
 
 pub const ESP32: &str = "tests/fixtures/esp32-devkit-v1.json";
 pub const EXAMPLE: &str = "tests/fixtures/example-domain.json";
@@ -37,11 +37,15 @@ pub struct Assembly {
 impl EntityPayload for Assembly {
     fn validate(&self) -> Result<(), DomainError> {
         if self.parts.is_empty() {
-            return Err(DomainError::Invalid("an assembly needs parts".to_owned()));
+            return Err(DomainError::invalid_at(
+                FieldPath::root().key("parts"),
+                "an assembly needs parts",
+            ));
         }
         if !self.parts.windows(2).all(|pair| pair[0] < pair[1]) {
-            return Err(DomainError::Invalid(
-                "parts must be sorted and unique".to_owned(),
+            return Err(DomainError::invalid_at(
+                FieldPath::root().key("parts"),
+                "parts must be sorted and unique",
             ));
         }
         Ok(())

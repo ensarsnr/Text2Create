@@ -73,6 +73,16 @@ impl Source {
         Self::new(Actor::System { component }, Activity::Import {}, None)
     }
 
+    /// A migration by `component` from version `from` to `to`. Only the
+    /// migration code creates this source.
+    pub(crate) fn migration(component: Text<64>, from: u32, to: u32) -> Self {
+        Self::new(
+            Actor::System { component },
+            Activity::Migration { from, to },
+            None,
+        )
+    }
+
     fn new(actor: Actor, activity: Activity, model: Option<ModelInvocation>) -> Self {
         Self {
             actor,

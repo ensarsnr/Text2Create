@@ -5,6 +5,8 @@
 //! validated, and re-encoded them (see [`normalize_typed`]).
 
 use crate::ids::{RecordRef, RecordType};
+use crate::model::ProjectDocument;
+use crate::path::FieldPath;
 use crate::scalar::{check_domain_id, check_kind_name};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -20,9 +22,32 @@ pub enum DomainError {
     /// The codec does not define this entity kind.
     #[error("unknown entity kind `{0}`")]
     UnknownKind(String),
-    /// The payload does not match the typed payload or fails its validation.
-    #[error("invalid payload: {0}")]
-    Invalid(String),
+    /// The data does not match the typed payload or fails a validation rule.
+    /// `path` is relative to the value the codec was given: the payload for
+    /// payload checks, the document for [`DomainCodec::check_project`].
+    #[error("{}{message}", crate::strict::at(path))]
+    Invalid { path: FieldPath, message: String },
+    /// The domain defines no migration from version `from` to `from + 1`.
+    #[error("no migration from version {from}")]
+    NoMigration { from: u32 },
+}
+
+impl DomainError {
+    /// Invalid data, without a more precise location.
+    pub fn invalid(message: impl Into<String>) -> Self {
+        Self::Invalid {
+            path: FieldPath::root(),
+            message: message.into(),
+        }
+    }
+
+    /// Invalid data at `path`.
+    pub fn invalid_at(path: FieldPath, message: impl Into<String>) -> Self {
+        Self::Invalid {
+            path,
+            message: message.into(),
+        }
+    }
 }
 
 /// A codec could not be registered.
@@ -89,6 +114,24 @@ pub trait DomainCodec: Send + Sync {
         let _ = data;
         Err(DomainError::UnknownKind(kind.to_owned()))
     }
+    /// Checks rules of this domain that span records, for example a limit on
+    /// the number of entities of a kind. Called for every domain listed in
+    /// `domains`, after all core invariants hold, both when loading and on
+    /// the write path. Errors use paths relative to the document.
+    fn check_project(&self, document: &ProjectDocument) -> Result<(), DomainError> {
+        let _ = document;
+        Ok(())
+    }
+    /// Upgrades the payload of an entity of kind `kind` from version `from`
+    /// of this domain to version `from + 1`. [`crate::Project::migrate`] calls
+    /// it once per version step, in order, and then normalizes and validates
+    /// the result with [`DomainCodec::normalize_entity`]. Migrations must be
+    /// deterministic and must not reject data silently: return an error
+    /// instead. The default defines no migrations.
+    fn migrate_entity(&self, kind: &str, from: u32, data: Value) -> Result<Value, DomainError> {
+        let _ = (kind, data);
+        Err(DomainError::NoMigration { from })
+    }
 }
 
 /// A typed entity payload. Payload types should reject unknown fields.
@@ -105,9 +148,10 @@ pub trait EntityPayload: Serialize + DeserializeOwned {
 
 /// Decodes `data` into `T`, validates it, and re-encodes it.
 pub fn normalize_typed<T: EntityPayload>(data: &Value) -> Result<NormalizedPayload, DomainError> {
-    let typed = T::deserialize(data).map_err(|e| DomainError::Invalid(e.to_string()))?;
+    let typed: T = crate::path::from_value(data)
+        .map_err(|(path, error)| DomainError::invalid_at(path, error.to_string()))?;
     typed.validate()?;
-    let value = serde_json::to_value(&typed).map_err(|e| DomainError::Invalid(e.to_string()))?;
+    let value = serde_json::to_value(&typed).map_err(|e| DomainError::invalid(e.to_string()))?;
     Ok(NormalizedPayload {
         references: typed.references(),
         value,

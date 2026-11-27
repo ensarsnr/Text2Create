@@ -1,6 +1,6 @@
 # Project IR
 
-> **Status:** v1 specification — **draft, implementation in progress.** This document specifies the first version of the Project IR data model. The model, strict loading, invariants, canonical serialization, and the [write path](#write-path) are implemented in `src-tauri/crates/text2create-ir`; projects are persisted by `text2create-store` (ADR-0015). Implementation is tracked in [#10](https://github.com/ensarsnr/Text2Create/issues/10). The underlying decisions are [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading), both **Accepted (provisional)** until the implementation confirms them. Decisions taken while specifying v1 are listed under [Specification Decisions](#specification-decisions).
+> **Status:** v1 specification — **draft, implementation in progress.** This document specifies the first version of the Project IR data model. The model, strict loading with [error locations](#error-locations), invariants, canonical serialization, the [write path](#write-path), and [migrations](#migrations) are implemented in `src-tauri/crates/text2create-ir`; projects are persisted by `text2create-store` (ADR-0015). Implementation is tracked in [#10](https://github.com/ensarsnr/Text2Create/issues/10). The underlying decisions are [ADR-0008](DECISIONS.md#adr-0008-structured-project-state-through-a-project-ir) and [ADR-0014](DECISIONS.md#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading), both **Accepted (provisional)** until the implementation confirms them. Decisions taken while specifying v1 are listed under [Specification Decisions](#specification-decisions).
 
 ## What the Project IR Is
 
@@ -51,7 +51,7 @@ At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement
 | Project information, requirements, entities, artifacts, links, plans and tasks, validation results, provenance records | — | [#10](https://github.com/ensarsnr/Text2Create/issues/10) |
 | Typed domain extension interface and a test-only example domain | Electronics domain schema | [#30](https://github.com/ensarsnr/Text2Create/issues/30) |
 | — | Embedded (firmware) domain schema | [#44](https://github.com/ensarsnr/Text2Create/issues/44) |
-| Strict loading, version checks, canonical serialization, invariants | Migrations between versions, backups before migration | [#11](https://github.com/ensarsnr/Text2Create/issues/11) |
+| Strict loading, version checks, canonical serialization, invariants, error locations, migrations between versions (see [Migrations](#migrations)) | Format migrations: v1 is the first format version, so none exist yet | [#11](https://github.com/ensarsnr/Text2Create/issues/11) |
 | Write path: change sets, operations, provenance creation (see [Write Path](#write-path)) | — | [#43](https://github.com/ensarsnr/Text2Create/issues/43); required before #12 |
 | — | Persistence: implemented outside the IR crate by `text2create-store` ([ADR-0015](DECISIONS.md#adr-0015-sqlite-library-schema-migrations-and-project-layout)) | [#12](https://github.com/ensarsnr/Text2Create/issues/12) |
 | `Digest` value format | Computing content digests, file access, detecting external file changes | [#13](https://github.com/ensarsnr/Text2Create/issues/13) |
@@ -245,7 +245,7 @@ The core treats payloads as opaque until the domain codec has processed them. Fo
 - the re-encoded payload equals the stored payload (stored payloads are always in canonical form);
 - every reported record ID exists.
 
-Domains evolve independently: each has its own version, and its payload migrations are part of the domain ([#11](https://github.com/ensarsnr/Text2Create/issues/11)). A test-only example domain demonstrates the interface in #10.
+A domain can also check project-wide rules that span records (`check_project`, invariant 13), and it migrates its own payloads between its versions (`migrate_entity`, see [Migrations](#migrations)). Domains evolve independently: each has its own version. A test-only example domain demonstrates the interface in #10, and test-only version 2 domains demonstrate migrations in #11.
 
 ## Loading Pipeline
 
@@ -261,6 +261,21 @@ Loading is the only way to obtain a validated project. The loader never writes t
 4. **Typed parsing:** the document is parsed into Rust types that reject unknown fields and unknown enum values. Typed parsing reads the original bytes again so that errors report a line and column.
 5. **Payload normalization:** each entity payload is processed by its domain codec, as described above.
 6. **Invariant checks:** see [Invariants](#invariants).
+
+### Error Locations
+
+Every rejection reports where the invalid data is, as a JSON Pointer (RFC 6901) into the document, for example `/requirements/0/status/by`, together with a message that can be shown to the user. The message contains the pointer. The location is as precise as the stage that rejects the data:
+
+| Stage | Location |
+| --- | --- |
+| Strict parsing | The value that is invalid; for a repeated key, the object that repeats it |
+| Version checks | `/format/version`, or `/domains/<i>/id` or `/domains/<i>/version` |
+| Typed parsing | The invalid or unknown field; for a missing field, the object that lacks it; inside a tagged value such as `actor` or `status`, the tagged value |
+| Payload normalization | The location inside the payload, for example `/entities/0/data/size` |
+| Invariants | The field that violates the rule, for example the reference that does not resolve or the second of two records out of order |
+| Domain rules | The location the domain reports |
+
+Change sets report locations in the same way. Write path errors raised by an operation use locations relative to that operation.
 
 Repeated keys must be rejected before conversion to a JSON value because the conversion itself silently keeps only the last value. Data that does not come from Text2Create's own serializer (project files, imports, model responses, tool output) must go through this parser. Frontend command arguments are parsed by Tauri before they reach application code, so this check does not apply to them. JavaScript's `JSON.stringify` cannot produce repeated keys.
 
@@ -280,6 +295,7 @@ A loaded project satisfies all of the following:
 10. `rev` is at least 1.
 11. Entity payloads are in canonical form.
 12. `TaskRunId` references are not resolved in v1, because task runs are stored outside the IR.
+13. The project-wide rules of every listed domain hold (`check_project`). They are checked after rules 1–12.
 
 Rules 6–8 are data integrity rules. They prevent, for example, a model-attributed change from confirming a requirement or recording a validation result. They are not an approval workflow, which is defined in #26.
 
@@ -333,9 +349,25 @@ Data is never silently discarded, and data that could not be fully validated is 
 | Payload not in canonical form | Rejected (indicates an external edit or a bug) |
 | Domain not available in this build | Rejected; the file is not modified |
 | Format or domain version newer than supported | Rejected; the file is not modified |
-| Format or domain version older than supported | Migrated after a backup ([#11](https://github.com/ensarsnr/Text2Create/issues/11)); rejected until migrations exist |
+| Format or domain version older than supported | Rejected by loading; opened only after a backup and a [migration](#migrations) |
 
 There is no mechanism that preserves unknown fields and writes them back, because it would let unvalidated data persist in the IR. Read-only viewing of projects from newer versions is out of scope for v1.
+
+## Migrations
+
+Loading never migrates. A document written with an older format or domain version fails to load with an error that reports that it needs a migration. `Project::migrate` then:
+
+1. parses the document with the strict parser and refuses newer or unknown format and domain versions;
+2. runs the format steps from the stored version to the current one, in order, on the JSON value;
+3. runs, for each listed domain whose version is older, the domain's payload migration once per version step for every payload of that domain, and normalizes the migrated payloads with the current codec;
+4. records each step as a provenance record with the `system` actor and a `migration` activity (`from`, `to`). The component is `project-ir` for format steps and `domain:<id>` for domain steps. The step's record becomes the `modified` provenance of every entity whose payload it changed, and of the project record. Existing provenance records are kept unchanged;
+5. runs the complete loading pipeline on the result.
+
+Migrations are deterministic: the result depends only on the input, the available domains, and the clock and identifier generator of the core. They use no external services. A step that cannot convert data fails with an error that names the step and the location, and never drops or repairs data silently. The input is never modified.
+
+Format version 1 is the first format version, so this build contains no format steps. The framework is tested with a synthetic format 0 fixture (`tests/fixtures/synthetic-format-v0.json`) and test-only version 2 domains.
+
+Stored projects are backed up before a migration is saved: the store first migrates in memory, then copies the database into the project's `backups/` directory with SQLite `VACUUM INTO` (which includes committed data that is still in the write-ahead log), verifies the copy, and only then saves the migrated document in one transaction ([ADR-0016](DECISIONS.md#adr-0016-project-ir-error-locations-and-versioned-migrations)). The SQLite schema version of the database (ADR-0015) is separate from the Project IR format version.
 
 ## Canonical Serialization
 
@@ -453,6 +485,8 @@ Decisions taken while specifying v1, with the alternatives that were rejected. C
 | 5 | Projects from newer IR versions | Rejected without modifying the file. Read-only viewing is out of scope for v1. | Read-only viewing in v1 |
 | 6 | Unicode normalization of text and paths | Not required and not applied in v1 (see [Scalar Types](#scalar-types)) | Requiring NFC or normalizing automatically |
 | 7 | Embedded (firmware) domain schema | Its own issue, [#44](https://github.com/ensarsnr/Text2Create/issues/44). Electronics (#30) owns boards, components, pins, nets, and power; embedded owns firmware targets, toolchains, build configuration, and the mapping of firmware signals to pins. | Including it in #30 |
+| 8 | Error locations | JSON Pointers, recorded only after a parse has failed ([ADR-0016](DECISIONS.md#adr-0016-project-ir-error-locations-and-versioned-migrations)) | Line and column only; a JSON Schema validator |
+| 9 | Migration of older documents | On the JSON value, recorded as `system` provenance per step, then fully revalidated | Keeping Rust types for every old version; migrating without provenance |
 
 ## Open Questions
 

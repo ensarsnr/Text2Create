@@ -139,9 +139,12 @@ fn older_or_invalid_format_versions_are_rejected() {
             v.as_object_mut().unwrap().remove("format");
         },
     ] {
-        assert!(matches!(mutate(change), Err(LoadError::NotProjectIr(_))));
+        assert!(matches!(
+            mutate(change),
+            Err(LoadError::NotProjectIr { .. })
+        ));
     }
-    assert!(matches!(load(b"[]"), Err(LoadError::NotProjectIr(_))));
+    assert!(matches!(load(b"[]"), Err(LoadError::NotProjectIr { .. })));
 }
 
 #[test]
@@ -164,12 +167,12 @@ fn domain_versions_must_match_this_build() {
     ));
     assert!(matches!(
         mutate(|v| v["domains"][0]["id"] = json!("robotics")),
-        Err(LoadError::UnknownDomain(id)) if id == "robotics"
+        Err(LoadError::UnknownDomain { id, index: 0 }) if id == "robotics"
     ));
     // A build without the domain rejects the project.
     assert!(matches!(
         Project::load(&read(EXAMPLE), &DomainRegistry::new()),
-        Err(LoadError::UnknownDomain(id)) if id == "example"
+        Err(LoadError::UnknownDomain { id, index: 0 }) if id == "example"
     ));
 }
 
@@ -183,7 +186,8 @@ fn unknown_fields_are_rejected_with_their_location() {
         1,
     );
     match load(input.as_bytes()) {
-        Err(LoadError::Schema(error)) => {
+        Err(LoadError::Schema { error, path }) => {
+            assert_eq!(path.as_str(), "/requirements/0/tags");
             assert!(
                 error.to_string().contains("unknown field `tags`"),
                 "{error}"
@@ -266,6 +270,6 @@ fn invalid_identifiers_and_scalars_are_rejected() {
         |v: &mut Value| v["requirements"][0]["provenance"]["rev"] = json!(-1),
         |v: &mut Value| v["requirements"][0]["provenance"]["rev"] = json!(u64::from(u32::MAX) + 1),
     ] {
-        assert!(matches!(mutate(change), Err(LoadError::Schema(_))));
+        assert!(matches!(mutate(change), Err(LoadError::Schema { .. })));
     }
 }

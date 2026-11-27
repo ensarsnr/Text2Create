@@ -82,8 +82,12 @@ pub enum ChangeSetParseError {
     Json(#[from] StrictJsonError),
     /// The JSON does not describe a change set. The message includes the line
     /// and column.
-    #[error("invalid change set: {0}")]
-    Schema(serde_json::Error),
+    #[error("invalid change set {}{error}", crate::strict::at(path))]
+    Schema {
+        path: crate::path::FieldPath,
+        #[source]
+        error: serde_json::Error,
+    },
 }
 
 /// A change to a project: an ordered list of operations, applied all or
@@ -111,7 +115,8 @@ impl ChangeSet {
     pub fn from_json(bytes: &[u8]) -> Result<Self, ChangeSetParseError> {
         strict::parse(bytes)?;
         // Parse the original bytes again so that errors report a line and column.
-        serde_json::from_slice(bytes).map_err(ChangeSetParseError::Schema)
+        crate::path::from_slice(bytes)
+            .map_err(|(path, error)| ChangeSetParseError::Schema { path, error })
     }
 }
 
@@ -332,7 +337,7 @@ mod tests {
         ));
         assert!(matches!(
             ChangeSet::from_json(br#"{"inputs":[],"operations":[{"op":"delete_everything"}]}"#),
-            Err(ChangeSetParseError::Schema(_))
+            Err(ChangeSetParseError::Schema { .. })
         ));
     }
 }

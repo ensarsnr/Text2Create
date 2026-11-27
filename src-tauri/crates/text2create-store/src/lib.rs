@@ -5,14 +5,17 @@
 //! ```text
 //! <root>/
 //! └── prj_<uuid>/            one directory per project, named by its ID
-//!     └── project.sqlite     the project database (with -wal/-shm while open)
+//!     ├── project.sqlite     the project database (with -wal/-shm while open)
+//!     └── backups/           copies taken before Project IR migrations
 //! ```
 //!
 //! The database stores the Project IR document in canonical JSON. It is
 //! written only with the output of [`Project::create`] or [`Project::apply`],
 //! and read only through [`Project::load`], so every IR rule applies to stored
-//! data. This crate adds no other way to change a project, and it has no
-//! Tauri dependency.
+//! data. A document written with an older format or domain version is opened
+//! only after [`ProjectStore::migrate`] has backed it up and migrated it with
+//! [`Project::migrate`]. This crate adds no other way to change a project,
+//! and it has no Tauri dependency.
 
 #![forbid(unsafe_code)]
 
@@ -30,13 +33,18 @@ use text2create_ir::domain::DomainRegistry;
 use text2create_ir::ids::ProjectId;
 use text2create_ir::scalar::{Text, Timestamp};
 use text2create_ir::source::{Clock, IdGenerator, Source};
-use text2create_ir::{Applied, LoadError, Project, WriteEnv, WriteError};
+use text2create_ir::{
+    Applied, LoadError, MigrateError, MigrationStep, Project, WriteEnv, WriteError,
+};
 
 /// File name of the project database inside a project directory.
 pub const DATABASE_FILE: &str = "project.sqlite";
 
 /// Prefix of directories that are still being created. They are never listed.
 const CREATING_PREFIX: &str = ".creating-";
+
+/// Directory inside a project directory that holds backups.
+pub const BACKUPS_DIRECTORY: &str = "backups";
 
 /// Why a store operation failed. A failed operation never changes stored data.
 #[derive(Debug, thiserror::Error)]
@@ -57,6 +65,16 @@ pub enum StoreError {
     /// because it comes from a newer version of Text2Create.
     #[error("the stored Project IR was rejected: {0}")]
     InvalidIr(#[source] LoadError),
+    /// The project was written with an older format or domain version. Call
+    /// [`ProjectStore::migrate`] to back it up and migrate it.
+    #[error("the project must be migrated before it can be opened: {0}")]
+    NeedsMigration(#[source] LoadError),
+    /// The migration failed; the project was not changed.
+    #[error("the project could not be migrated: {0}")]
+    Migration(#[source] MigrateError),
+    /// The backup before a migration failed; the project was not changed.
+    #[error("the backup before the migration failed: {0}")]
+    Backup(String),
     /// The write path rejected the change set.
     #[error(transparent)]
     Write(#[from] WriteError),
@@ -100,6 +118,14 @@ pub struct ProjectList {
     /// Most recently updated first.
     pub projects: Vec<ProjectSummary>,
     pub unreadable: Vec<UnreadableProject>,
+}
+
+/// The result of [`ProjectStore::migrate`].
+#[derive(Debug)]
+pub struct MigrationReport {
+    /// The verified copy of the project database taken before the migration.
+    pub backup: PathBuf,
+    pub steps: Vec<MigrationStep>,
 }
 
 /// The projects stored under one root directory.
@@ -166,7 +192,93 @@ impl ProjectStore {
 
     /// Opens a stored project: checks the database, runs pending schema
     /// migrations, and loads the document with [`Project::load`].
+    ///
+    /// A document from an older format or domain version is not opened; the
+    /// error is [`StoreError::NeedsMigration`].
     pub fn open(&self, id: ProjectId) -> Result<OpenProject, StoreError> {
+        let (connection, row, directory) = self.connect(id)?;
+        let project = Project::load(row.document.as_bytes(), &self.registry).map_err(|error| {
+            if error.needs_migration() {
+                StoreError::NeedsMigration(error)
+            } else {
+                StoreError::InvalidIr(error)
+            }
+        })?;
+        check_metadata(&project, &row, id)?;
+        Ok(OpenProject {
+            connection,
+            project,
+            revision: row.revision,
+            directory,
+            registry: Arc::clone(&self.registry),
+        })
+    }
+
+    /// Backs up and migrates a project written with an older format or domain
+    /// version, so that it can be opened.
+    ///
+    /// The migration runs in memory first; a failing migration changes
+    /// nothing and creates no backup. Then the database is copied with SQLite
+    /// `VACUUM INTO`, which includes committed data that is still in the WAL
+    /// file, the copy is verified and moved into `backups/`, and only then is
+    /// the migrated document saved in one transaction. If the save fails, the
+    /// project is unchanged and the backup is kept.
+    pub fn migrate(
+        &self,
+        id: ProjectId,
+        clock: &mut dyn Clock,
+        ids: &mut dyn IdGenerator,
+    ) -> Result<MigrationReport, StoreError> {
+        let (mut connection, row, directory) = self.connect(id)?;
+        match Project::load(row.document.as_bytes(), &self.registry) {
+            Ok(_) => return Err(StoreError::Migration(MigrateError::UpToDate)),
+            Err(error) if !error.needs_migration() => return Err(StoreError::InvalidIr(error)),
+            Err(_) => {}
+        }
+        let mut env = WriteEnv {
+            registry: &self.registry,
+            clock,
+            ids,
+        };
+        let migrated =
+            Project::migrate(row.document.as_bytes(), &mut env).map_err(StoreError::Migration)?;
+        check_metadata(&migrated.project, &row, id)?;
+        let last = migrated
+            .steps
+            .last()
+            .expect("a migration has steps")
+            .provenance;
+        let updated_at = provenance_time(&migrated.project, last);
+        let backup = backup(&connection, &directory, &updated_at, &row.document)?;
+
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute(
+            "UPDATE project_ir
+             SET name = ?1, updated_at = ?2, revision = revision + 1, document = ?3
+             WHERE id = 1 AND revision = ?4",
+            params![
+                migrated.project.document().project.name.as_str(),
+                updated_at.as_str(),
+                migrated.project.to_canonical_json(),
+                row.revision
+            ],
+        )?;
+        if changed != 1 {
+            return Err(StoreError::Conflict);
+        }
+        transaction.commit()?;
+        connection
+            .close()
+            .map_err(|(_, error)| StoreError::from(error))?;
+        Ok(MigrationReport {
+            backup,
+            steps: migrated.steps,
+        })
+    }
+
+    /// Opens the database of project `id`: checks it, runs pending schema
+    /// migrations, and reads the stored record.
+    fn connect(&self, id: ProjectId) -> Result<(Connection, Row, PathBuf), StoreError> {
         let directory = self.directory(id);
         let path = directory.join(DATABASE_FILE);
         if !path.is_file() {
@@ -179,21 +291,7 @@ impl ProjectStore {
         }
         schema::migrate(&mut connection, &path)?;
         let row = read_row(&connection)?;
-        let project = Project::load(row.document.as_bytes(), &self.registry)
-            .map_err(StoreError::InvalidIr)?;
-        let info = &project.document().project;
-        if info.id != id || row.project_id != id.to_string() || row.name != info.name.as_str() {
-            return Err(StoreError::Corrupt(
-                "the stored project information does not match the document".to_owned(),
-            ));
-        }
-        Ok(OpenProject {
-            connection,
-            project,
-            revision: row.revision,
-            directory,
-            registry: Arc::clone(&self.registry),
-        })
+        Ok((connection, row, directory))
     }
 
     /// Lists the stored projects without loading or modifying them.
@@ -310,6 +408,83 @@ struct Row {
     name: String,
     revision: i64,
     document: String,
+}
+
+/// The copied listing columns must match the document.
+fn check_metadata(project: &Project, row: &Row, id: ProjectId) -> Result<(), StoreError> {
+    let info = &project.document().project;
+    if info.id != id || row.project_id != id.to_string() || row.name != info.name.as_str() {
+        return Err(StoreError::Corrupt(
+            "the stored project information does not match the document".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Copies the database into `backups/` and verifies the copy. The name is
+/// derived from `at`; an existing backup is never replaced.
+fn backup(
+    connection: &Connection,
+    directory: &Path,
+    at: &Timestamp,
+    document: &str,
+) -> Result<PathBuf, StoreError> {
+    let failed =
+        |what: &str, error: &dyn std::fmt::Display| StoreError::Backup(format!("{what}: {error}"));
+    let backups = directory.join(BACKUPS_DIRECTORY);
+    fs::create_dir_all(&backups).map_err(|e| failed("creating the backup directory", &e))?;
+    let stamp: String = at
+        .as_str()
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect();
+    let name = format!("before-migration-{stamp}.sqlite");
+    let target = backups.join(&name);
+    if target.exists() {
+        return Err(StoreError::Backup(format!("`{name}` already exists")));
+    }
+    // A partial copy from an interrupted attempt has this name; it is never
+    // mistaken for a backup and is replaced.
+    let partial = backups.join(format!(".{name}.partial"));
+    if partial.exists() {
+        fs::remove_file(&partial).map_err(|e| failed("removing a partial copy", &e))?;
+    }
+    let partial_name = partial
+        .to_str()
+        .ok_or_else(|| StoreError::Backup("the backup path is not valid UTF-8".to_owned()))?;
+    connection
+        .execute("VACUUM INTO ?1", [partial_name])
+        .map_err(|e| failed("copying the database", &e))?;
+    let verified = (|| -> Result<bool, rusqlite::Error> {
+        let copy = Connection::open_with_flags(
+            &partial,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        let check: String = copy.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
+        let copied: String =
+            copy.query_row("SELECT document FROM project_ir WHERE id = 1", [], |r| {
+                r.get(0)
+            })?;
+        Ok(check == "ok" && copied == document)
+    })();
+    match verified {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = fs::remove_file(&partial);
+            return Err(StoreError::Backup(
+                "the copy does not match the database".to_owned(),
+            ));
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&partial);
+            return Err(failed("verifying the copy", &error));
+        }
+    }
+    let sync = |path: &Path| fs::File::open(path).and_then(|file| file.sync_all());
+    sync(&partial).map_err(|e| failed("writing the copy", &e))?;
+    fs::rename(&partial, &target).map_err(|e| failed("moving the copy into place", &e))?;
+    sync(&backups).map_err(|e| failed("writing the backup directory", &e))?;
+    Ok(target)
 }
 
 fn read_row(connection: &Connection) -> Result<Row, StoreError> {

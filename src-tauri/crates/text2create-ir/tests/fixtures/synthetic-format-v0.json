@@ -1,0 +1,213 @@
+{
+  "format": {
+    "schema": "text2create.project-ir",
+    "version": 0
+  },
+  "domains": [],
+  "project": {
+    "id": "prj_01a21c90-0000-7000-8000-000000000001",
+    "provenance": {
+      "rev": 1,
+      "created": "prv_01a21c90-0000-7000-8000-000000000001",
+      "modified": "prv_01a21c90-0000-7000-8000-000000000001"
+    },
+    "title": "ESP32 climate fan controller",
+    "description": "Monitors temperature and humidity and switches a fan. Illustrative example; the reference specification is defined in #31."
+  },
+  "provenance": [
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000001",
+      "at": "2026-11-27T10:00:00.000Z",
+      "actor": {
+        "type": "user"
+      },
+      "activity": {
+        "type": "user_edit"
+      },
+      "inputs": [],
+      "model": null
+    },
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000002",
+      "at": "2026-11-27T10:01:00.000Z",
+      "actor": {
+        "type": "user"
+      },
+      "activity": {
+        "type": "import"
+      },
+      "inputs": [],
+      "model": null
+    },
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000003",
+      "at": "2026-11-27T10:02:10.000Z",
+      "actor": {
+        "type": "model",
+        "provider": "ollama",
+        "model": "example-model"
+      },
+      "activity": {
+        "type": "interpretation"
+      },
+      "inputs": [
+        {
+          "record": "art_01a21c90-0000-7000-8000-000000000031",
+          "rev": null,
+          "digest": "sha256:2622e77ffac13156eee16b532c46349cca958abf905a5668c3a47a64c21e0aa5"
+        }
+      ],
+      "model": {
+        "prompt_digest": "sha256:e0ba90a1d72777690e4927512c8bb28c33936243e5c1effd7c3d43ad3cd0d76c",
+        "response_digest": "sha256:8dc84af9aae4026910c41f497d44e5189051afa911064fee8cc7a2ad2985353b"
+      }
+    },
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000004",
+      "at": "2026-11-27T10:05:00.000Z",
+      "actor": {
+        "type": "user"
+      },
+      "activity": {
+        "type": "user_edit"
+      },
+      "inputs": [],
+      "model": null
+    }
+  ],
+  "requirements": [
+    {
+      "id": "req_01a21c90-0000-7000-8000-000000000011",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000003",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000004"
+      },
+      "kind": "functional",
+      "priority": "must",
+      "status": {
+        "state": "confirmed",
+        "by": "prv_01a21c90-0000-7000-8000-000000000004"
+      },
+      "title": "Measure temperature and humidity",
+      "statement": "Periodically read ambient temperature and relative humidity.",
+      "origin": {
+        "type": "user",
+        "quote": "I want the ESP32 to monitor temperature and humidity and run a fan when it gets hot."
+      },
+      "acceptance": [
+        "A new reading is available at least every 5 seconds."
+      ]
+    },
+    {
+      "id": "req_01a21c90-0000-7000-8000-000000000012",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000003",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000004"
+      },
+      "kind": "functional",
+      "priority": "must",
+      "status": {
+        "state": "confirmed",
+        "by": "prv_01a21c90-0000-7000-8000-000000000004"
+      },
+      "title": "Switch the fan on above a temperature threshold",
+      "statement": "Turn the fan on when the temperature reaches 28 °C.",
+      "origin": {
+        "type": "clarification",
+        "question": "At which temperature should the fan turn on?",
+        "answer": "28 degrees Celsius."
+      },
+      "acceptance": [
+        "The fan output is enabled within one sampling period after the threshold is reached."
+      ]
+    },
+    {
+      "id": "req_01a21c90-0000-7000-8000-000000000013",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000003",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "kind": "functional",
+      "priority": "should",
+      "status": {
+        "state": "proposed"
+      },
+      "title": "Hysteresis to prevent fan chatter",
+      "statement": "Turn the fan off only after the temperature falls 2 °C below the threshold.",
+      "origin": {
+        "type": "inferred",
+        "rationale": "Without hysteresis the fan would toggle rapidly around the threshold."
+      },
+      "acceptance": []
+    },
+    {
+      "id": "req_01a21c90-0000-7000-8000-000000000014",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000003",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000004"
+      },
+      "kind": "constraint",
+      "priority": "must",
+      "status": {
+        "state": "confirmed",
+        "by": "prv_01a21c90-0000-7000-8000-000000000004"
+      },
+      "title": "Use an ESP32 DevKit V1 board",
+      "statement": "The controller is an ESP32 DevKit V1 development board.",
+      "origin": {
+        "type": "user",
+        "quote": "My board is an ESP32 DevKit V1."
+      },
+      "acceptance": []
+    }
+  ],
+  "entities": [],
+  "artifacts": [
+    {
+      "id": "art_01a21c90-0000-7000-8000-000000000031",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000002"
+      },
+      "kind": "core.document",
+      "path": "docs/board-notes.md",
+      "ownership": "user",
+      "content": {
+        "digest": "sha256:2622e77ffac13156eee16b532c46349cca958abf905a5668c3a47a64c21e0aa5",
+        "size_bytes": 1840,
+        "provenance": "prv_01a21c90-0000-7000-8000-000000000002"
+      }
+    }
+  ],
+  "links": [
+    {
+      "id": "lnk_01a21c90-0000-7000-8000-000000000041",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000003",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "kind": "core.derived_from",
+      "from": "req_01a21c90-0000-7000-8000-000000000014",
+      "to": "art_01a21c90-0000-7000-8000-000000000031"
+    },
+    {
+      "id": "lnk_01a21c90-0000-7000-8000-000000000042",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000003",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "kind": "core.refines",
+      "from": "req_01a21c90-0000-7000-8000-000000000013",
+      "to": "req_01a21c90-0000-7000-8000-000000000012"
+    }
+  ],
+  "plans": [],
+  "validations": []
+}
