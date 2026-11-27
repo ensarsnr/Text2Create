@@ -153,7 +153,7 @@ This log records architecture and project decisions using lightweight Architectu
 - **Logical model:** the IR is a single document (an aggregate of typed records with stable identifiers and references) that is loaded, validated, and checked for invariants as a whole.
 - **Persistence is separate:** the logical model does not depend on how it is stored. The physical layout is decided in [#12](https://github.com/ensarsnr/Text2Create/issues/12); SQLite remains the preferred store ([ADR-0006](#adr-0006-sqlite-for-local-persistence)).
 - **Records:** project information, requirements, entities, artifacts, links, plans with tasks, validation results, and provenance records. Native tool files stay authoritative for their content; artifacts reference them by path and content digest.
-- **Provenance is separate from history:** provenance records in the document describe how the current state came to be. A change journal for full history and rollback is a separate component ([#14](https://github.com/ensarsnr/Text2Create/issues/14)) that references provenance records instead of duplicating them.
+- **Provenance is separate from history:** provenance records in the document record who or what caused each change. Until the change journal exists, they are append-only and never removed. The change journal, which records the operations of each change and enables rollback, is a separate component ([#14](https://github.com/ensarsnr/Text2Create/issues/14)) that references provenance records instead of duplicating them.
 - **Planned work is separate from execution:** tasks describe planned work only. Task runs, execution status, and logs are stored outside the IR ([#27](https://github.com/ensarsnr/Text2Create/issues/27)).
 
 The schema definition approach is decided in [ADR-0014](#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading).
@@ -166,7 +166,7 @@ The schema definition approach is decided in [ADR-0014](#adr-0014-project-ir-sch
 
 **Validation required:** the #10 implementation must confirm the model with committed fixtures, byte-identical round trips, and invariant tests, including an illustrative ESP32 project.
 
-**Consequences:** the whole project is held in memory, which is expected to be acceptable for single-user local projects of hundreds to a few thousand records. Until the journal exists, intermediate modification history is not retained. Change history granularity and rollback semantics remain open and belong to #14.
+**Consequences:** the whole project is held in memory, which is expected to be acceptable for single-user local projects of hundreds to a few thousand records. Because provenance is append-only until the journal exists, the document grows with every change. Provenance retention after the journal exists, change history granularity, and rollback semantics remain open and belong to #14.
 
 ---
 

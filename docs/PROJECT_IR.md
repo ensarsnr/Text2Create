@@ -33,7 +33,7 @@ The Project IR keeps conversation as an input and records its outcomes as struct
 9. **Model-friendly:** relevant parts of the IR can be serialized into compact, structured context for AI models.
 10. **Safe against untrusted input:** content originating from models, files, or external sources is validated before it is written into the IR.
 
-At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement 1 depends on persistence ([#12](https://github.com/ensarsnr/Text2Create/issues/12)). Requirement 4 is addressed for the current state only (see [Provenance](#provenance)); full history and requirement 6 depend on the change journal ([#14](https://github.com/ensarsnr/Text2Create/issues/14)). Requirement 9 is addressed by a separate context projection in Milestone 3.
+At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement 1 depends on persistence ([#12](https://github.com/ensarsnr/Text2Create/issues/12)). Requirement 4 is addressed by append-only provenance records (see [Provenance](#provenance)): every change is attributed to its cause, but recording the individual operations of each change, and requirement 6, depend on the change journal ([#14](https://github.com/ensarsnr/Text2Create/issues/14)). Requirement 9 is addressed by a separate context projection in Milestone 3.
 
 ## Principles
 
@@ -50,9 +50,9 @@ At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement
 | --- | --- | --- |
 | Project information, requirements, entities, artifacts, links, plans and tasks, validation results, provenance records | — | [#10](https://github.com/ensarsnr/Text2Create/issues/10) |
 | Typed domain extension interface and a test-only example domain | Electronics domain schema | [#30](https://github.com/ensarsnr/Text2Create/issues/30) |
-| — | Embedded (firmware) domain schema | Not yet tracked |
+| — | Embedded (firmware) domain schema | [#44](https://github.com/ensarsnr/Text2Create/issues/44) |
 | Strict loading, version checks, canonical serialization, invariants | Migrations between versions, backups before migration | [#11](https://github.com/ensarsnr/Text2Create/issues/11) |
-| — | Write path: change sets, operations, provenance creation | Not yet tracked; required before #12 |
+| — | Write path: change sets, operations, provenance creation | [#43](https://github.com/ensarsnr/Text2Create/issues/43); required before #12 |
 | — | Persistence (SQLite mapping, transactions, single-writer locking) | [#12](https://github.com/ensarsnr/Text2Create/issues/12) |
 | `Digest` value format | Computing content digests, file access, detecting external file changes | [#13](https://github.com/ensarsnr/Text2Create/issues/13) |
 | — | Change journal, undo, rollback | [#14](https://github.com/ensarsnr/Text2Create/issues/14) |
@@ -122,7 +122,9 @@ Scalar values are validated by rejecting invalid input, never by silently normal
 
 ### Provenance
 
-Provenance records describe how the **current state** of the project came to be. They are separate from the change journal ([#14](https://github.com/ensarsnr/Text2Create/issues/14)), which will record full history and reference provenance records by ID instead of duplicating them.
+Provenance records record who or what caused each change to the project. Until the change journal ([#14](https://github.com/ensarsnr/Text2Create/issues/14)) exists, provenance records are **append-only**: a provenance record is never changed or removed, even when no current record references it anymore, for example after a record was modified again or removed. Provenance is separate from the change journal, which will record the operations of each change and reference provenance records by ID instead of duplicating them. How long provenance records are kept once the journal exists is decided in #14.
+
+Because the document grows with every change, long-lived projects may approach the document size limit before #14 is available. This is accepted for v1.
 
 A provenance record has:
 
@@ -137,7 +139,9 @@ A provenance record has:
 
 Mutable records carry `provenance: { "rev", "created", "modified" }`. `rev` starts at 1 and increases with each modification. `created` and `modified` reference provenance records. Decisions (for example a confirmed requirement) carry their own `by` reference. Immutable records (validation results, artifact content records) reference a single provenance record.
 
-The actor is assigned by the trusted Rust layer that knows where a change comes from. It is never taken from frontend or model input.
+References from provenance records (`inputs`, and the task of a `task_run` activity) are historical. They may point to records that have since been removed.
+
+The actor is assigned by the trusted Rust layer that knows where a change comes from. It is never taken from frontend or model input. Provenance records are created only by the write path ([#43](https://github.com/ensarsnr/Text2Create/issues/43)).
 
 ### Requirements
 
@@ -261,14 +265,14 @@ Repeated keys must be rejected before conversion to a JSON value because the con
 A loaded project satisfies all of the following:
 
 1. Record IDs are unique within each collection, and collections are sorted by ID. Task IDs are unique across all plans. `domains` is sorted and unique.
-2. Every reference resolves: link endpoints, task dependencies, inputs, outputs, and addressed requirements, validation subjects, provenance inputs, superseding requirements, and references inside domain payloads.
+2. Every reference resolves: link endpoints, task dependencies, inputs, outputs, and addressed requirements, validation subjects, superseding requirements, and references inside domain payloads. References from provenance records are historical and are not required to resolve (see [Provenance](#provenance)).
 3. Every kind is registered for its use (entity, artifact, action, check, or link) by a domain that is listed in `domains` or is `core`.
 4. Link endpoints have record types allowed by the link rule.
 5. Task dependencies stay within their plan and are acyclic.
 6. Tasks address only confirmed requirements.
 7. Every `by` field (confirmed, rejected, superseded, accepted, approved, archived, skipped, cancelled) references a provenance record whose actor is the user.
 8. Validation results reference a provenance record whose actor is a tool or the system.
-9. Every provenance record is referenced by the current state (no orphans). *(Depends on open decision 1.)*
+9. References to provenance records (`created`, `modified`, `by`, and the provenance of content records and validation results) resolve. Provenance records that the current state no longer references are allowed and are kept, because provenance is append-only.
 10. `rev` is at least 1.
 11. Entity payloads are in canonical form.
 12. `TaskRunId` references are not resolved in v1, because task runs are stored outside the IR.
@@ -396,17 +400,17 @@ The excerpt omits the remaining fields and records. A complete document must con
 
 ## Open Decisions
 
-The specification currently assumes the first option in each row. These must be confirmed before or during the #10 implementation.
+Rows marked **Decided** are settled. For the other rows, the specification assumes the first option; they must be confirmed before or during the #10 implementation.
 
 | # | Decision | Current assumption | Alternative |
 | --- | --- | --- | --- |
-| 1 | Provenance retention before the journal (#14) exists | Keep only provenance referenced by the current state; intermediate modification history is lost until #14 | Keep all provenance records (append-only); the document grows without bound |
+| 1 | Provenance retention before the journal (#14) exists | **Decided:** append-only; no provenance record is removed until #14 defines retention | Keeping only provenance referenced by the current state (rejected: loses history before #14) |
 | 2 | Decision status on entities | Entities have `status` (`proposed`, `accepted`, `rejected`) | No status; rely on provenance only |
-| 3 | Write path (change sets, operations, provenance creation) | A separate issue, completed before #12 | Part of #10 |
+| 3 | Write path (change sets, operations, provenance creation) | **Decided:** a separate issue, [#43](https://github.com/ensarsnr/Text2Create/issues/43), completed before #12 | Part of #10 (rejected) |
 | 4 | Code location | A separate crate without a Tauri dependency, as a workspace member under `src-tauri/` | A module inside the existing application crate |
 | 5 | Projects from newer versions | Rejected in v1 | Read-only viewing |
 | 6 | Unicode normalization of text and paths | Not enforced in v1 | Require or apply NFC |
-| 7 | Embedded (firmware) domain schema | Needs its own issue | Include in #30 |
+| 7 | Embedded (firmware) domain schema | **Decided:** its own issue, [#44](https://github.com/ensarsnr/Text2Create/issues/44). Electronics (#30) owns boards, components, pins, nets, and power; embedded owns firmware targets, toolchains, build configuration, and the mapping of firmware signals to pins. | Include in #30 (rejected) |
 
 ## Open Questions
 
