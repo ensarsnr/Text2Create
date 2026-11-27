@@ -13,6 +13,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 - A Tauri 2 desktop application skeleton for macOS (Apple Silicon) with a React + TypeScript frontend and a Rust core
 - One demo command (`greet`) that verifies frontend-to-Rust communication, with input validation and unit tests
 - Separate Content Security Policies for production builds and development
+- Default-deny command permissions: the main window may only call the `greet` command; no core plugin permissions are granted
 - CI checks for the frontend (type-check, build, `npm audit`, registry signature verification) and the desktop app on macOS (formatting, Clippy, tests, release bundle build)
 
 - Project documentation describing vision, scope, and the proposed architecture
@@ -38,7 +39,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 
 ## Current Focus
 
-1. Complete the remaining Milestone 1 validation items (background task with progress events and cancellation, restricted command permissions).
+1. Complete the remaining Milestone 1 validation items (background task with progress events and cancellation, tracked in #25).
 2. Collect feedback on the architecture direction, the Project IR concept, and the MVP scope.
 3. Prepare Milestone 2: Project Core and Project IR.
 
