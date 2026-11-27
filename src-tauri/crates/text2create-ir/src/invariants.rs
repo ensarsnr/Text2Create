@@ -6,6 +6,7 @@ use crate::model::{
     Actor, DecisionStatus, MAX_DIAGNOSTICS, PlanStatus, ProjectDocument, RecordProvenance,
     RequirementStatus, TaskDisposition,
 };
+use crate::path::{FieldPath, Loc, ROOT};
 use crate::scalar::Kind;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -40,19 +41,25 @@ pub enum Rule {
     CanonicalPayload,
     /// A resource limit, such as the number of diagnostics in a validation result.
     Limit,
+    /// 13. A rule of a domain listed in `domains`, checked by
+    ///     [`crate::domain::DomainCodec::check_project`].
+    DomainRule,
 }
 
 /// A loaded document violates an invariant.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("invariant violated ({rule:?}): {message}")]
+#[error("invariant violated ({rule:?}) {}{message}", crate::strict::at(path))]
 pub struct InvariantError {
     pub rule: Rule,
+    /// The location of the violation, as a JSON Pointer into the document.
+    pub path: FieldPath,
     pub message: String,
 }
 
-fn fail<T>(rule: Rule, message: impl fmt::Display) -> Result<T, InvariantError> {
+fn fail<T>(rule: Rule, path: &Loc<'_>, message: impl fmt::Display) -> Result<T, InvariantError> {
     Err(InvariantError {
         rule,
+        path: path.field_path(),
         message: message.to_string(),
     })
 }
@@ -68,18 +75,21 @@ pub(crate) enum KindUse {
 }
 
 /// Finds the codec of `kind` and checks that the kind is registered for `use_`
-/// by a domain that is `core` or listed in `domains` (rule 3).
+/// by a domain that is `core` or listed in `domains` (rule 3). `path` is the
+/// location of the kind.
 pub(crate) fn resolve_kind<'r>(
     kind: &Kind,
     use_: KindUse,
     doc: &ProjectDocument,
     registry: &'r DomainRegistry,
+    path: &Loc<'_>,
 ) -> Result<&'r dyn DomainCodec, InvariantError> {
     let domain = kind.domain();
     let declared = domain == CORE_DOMAIN || doc.domains.iter().any(|d| d.id.as_str() == domain);
     let Some(codec) = registry.get(domain).filter(|_| declared) else {
         return fail(
             Rule::KindRegistered,
+            path,
             format_args!(
                 "kind `{}` belongs to domain `{domain}`, which is not listed in `domains`",
                 kind.as_str()
@@ -97,6 +107,7 @@ pub(crate) fn resolve_kind<'r>(
     if !registered {
         return fail(
             Rule::KindRegistered,
+            path,
             format_args!(
                 "kind `{}` is not registered as a {use_:?} kind",
                 kind.as_str()
@@ -106,70 +117,119 @@ pub(crate) fn resolve_kind<'r>(
     Ok(codec)
 }
 
+/// Checks that `items` at `path` are sorted by `key` without duplicates. The
+/// error points at the first item that is out of order or repeated.
 fn sorted_unique<T, K: Ord + fmt::Display>(
     items: &[T],
     key: impl Fn(&T) -> K,
     what: &str,
     rule: Rule,
+    path: &Loc<'_>,
 ) -> Result<(), InvariantError> {
-    for pair in items.windows(2) {
+    for (index, pair) in items.windows(2).enumerate() {
         let (a, b) = (key(&pair[0]), key(&pair[1]));
         if a == b {
-            return fail(rule, format_args!("duplicate {what} `{a}`"));
+            return fail(
+                rule,
+                &path.index(index + 1),
+                format_args!("duplicate {what} `{a}`"),
+            );
         }
         if a > b {
-            return fail(rule, format_args!("{what} `{b}` is not sorted after `{a}`"));
+            return fail(
+                rule,
+                &path.index(index + 1),
+                format_args!("{what} `{b}` is not sorted after `{a}`"),
+            );
         }
     }
     Ok(())
 }
 
-/// Checks every invariant. `payload_references` holds the record IDs that the
-/// domain codecs reported for each entity payload.
+/// Checks every invariant. `payload_references` holds, for each entity in
+/// order, the record IDs that its domain codec reported for its payload.
+///
+/// Locations are built on the stack and converted into paths only when a
+/// check fails, so a valid document allocates nothing for them.
 pub(crate) fn check(
     doc: &ProjectDocument,
     registry: &DomainRegistry,
     payload_references: &[(EntityId, Vec<RecordRef>)],
 ) -> Result<(), InvariantError> {
+    let domains = ROOT.key("domains");
+    let requirements = ROOT.key("requirements");
+    let entities = ROOT.key("entities");
+    let artifacts = ROOT.key("artifacts");
+    let links = ROOT.key("links");
+    let plans = ROOT.key("plans");
+    let validations = ROOT.key("validations");
+
     // Rule 1.
     sorted_unique(
         &doc.domains,
         |d| d.id.as_str().to_owned(),
         "domain",
         Rule::Domains,
+        &domains,
     )?;
-    if doc.domains.iter().any(|d| d.id.as_str() == CORE_DOMAIN) {
-        return fail(Rule::Domains, "`core` is built in and must not be listed");
+    if let Some(index) = doc
+        .domains
+        .iter()
+        .position(|d| d.id.as_str() == CORE_DOMAIN)
+    {
+        return fail(
+            Rule::Domains,
+            &domains.index(index),
+            "`core` is built in and must not be listed",
+        );
     }
     sorted_unique(
         &doc.provenance,
         |r| r.id,
         "provenance record",
         Rule::SortedUnique,
+        &ROOT.key("provenance"),
     )?;
     sorted_unique(
         &doc.requirements,
         |r| r.id,
         "requirement",
         Rule::SortedUnique,
+        &requirements,
     )?;
-    sorted_unique(&doc.entities, |r| r.id, "entity", Rule::SortedUnique)?;
-    sorted_unique(&doc.artifacts, |r| r.id, "artifact", Rule::SortedUnique)?;
-    sorted_unique(&doc.links, |r| r.id, "link", Rule::SortedUnique)?;
-    sorted_unique(&doc.plans, |r| r.id, "plan", Rule::SortedUnique)?;
+    sorted_unique(
+        &doc.entities,
+        |r| r.id,
+        "entity",
+        Rule::SortedUnique,
+        &entities,
+    )?;
+    sorted_unique(
+        &doc.artifacts,
+        |r| r.id,
+        "artifact",
+        Rule::SortedUnique,
+        &artifacts,
+    )?;
+    sorted_unique(&doc.links, |r| r.id, "link", Rule::SortedUnique, &links)?;
+    sorted_unique(&doc.plans, |r| r.id, "plan", Rule::SortedUnique, &plans)?;
     sorted_unique(
         &doc.validations,
         |r| r.id,
         "validation result",
         Rule::SortedUnique,
+        &validations,
     )?;
     let mut task_ids = BTreeSet::new();
-    for plan in &doc.plans {
-        sorted_unique(&plan.tasks, |t| t.id, "task", Rule::SortedUnique)?;
-        for task in &plan.tasks {
+    for (p, plan) in doc.plans.iter().enumerate() {
+        let plan_at = plans.index(p);
+        let tasks = plan_at.key("tasks");
+        sorted_unique(&plan.tasks, |t| t.id, "task", Rule::SortedUnique, &tasks)?;
+        for (t, task) in plan.tasks.iter().enumerate() {
             if !task_ids.insert(task.id) {
                 return fail(
                     Rule::SortedUnique,
+                    &tasks.index(t),
                     format_args!("duplicate task `{}`", task.id),
                 );
             }
@@ -186,12 +246,13 @@ pub(crate) fn check(
         .chain(task_ids.iter().map(|id| RecordRef::Task(*id)))
         .chain(doc.validations.iter().map(|r| RecordRef::Validation(r.id)))
         .collect();
-    let resolve = |owner: &dyn fmt::Display, reference: RecordRef| {
+    let resolve = |path: &Loc<'_>, owner: &dyn fmt::Display, reference: RecordRef| {
         if records.contains(&reference) {
             Ok(())
         } else {
             fail(
                 Rule::ReferenceResolves,
+                path,
                 format_args!("`{owner}` references missing record `{reference}`"),
             )
         }
@@ -200,34 +261,39 @@ pub(crate) fn check(
     // Rules 7, 9, and 10.
     let actors: BTreeMap<ProvenanceId, &Actor> =
         doc.provenance.iter().map(|p| (p.id, &p.actor)).collect();
-    let provenance = |owner: &dyn fmt::Display, id: ProvenanceId| {
+    let provenance = |path: &Loc<'_>, owner: &dyn fmt::Display, id: ProvenanceId| {
         actors.get(&id).copied().map_or_else(
             || {
                 fail(
                     Rule::ProvenanceResolves,
+                    path,
                     format_args!("`{owner}` references missing provenance record `{id}`"),
                 )
             },
             Ok,
         )
     };
-    let record_provenance = |owner: &dyn fmt::Display, p: &RecordProvenance| {
+    // `path` is the location of the `provenance` object.
+    let record_provenance = |path: &Loc<'_>, owner: &dyn fmt::Display, p: &RecordProvenance| {
         if p.rev == 0 {
             return fail(
                 Rule::Revision,
+                &path.key("rev"),
                 format_args!("`{owner}` has rev 0; rev starts at 1"),
             );
         }
-        provenance(owner, p.created)?;
-        provenance(owner, p.modified)?;
+        provenance(&path.key("created"), owner, p.created)?;
+        provenance(&path.key("modified"), owner, p.modified)?;
         Ok(())
     };
-    let user_decision = |owner: &dyn fmt::Display, by: ProvenanceId| {
-        if matches!(provenance(owner, by)?, Actor::User {}) {
+    // `path` is the location of the `by` field.
+    let user_decision = |path: &Loc<'_>, owner: &dyn fmt::Display, by: ProvenanceId| {
+        if matches!(provenance(path, owner, by)?, Actor::User {}) {
             Ok(())
         } else {
             fail(
                 Rule::UserDecision,
+                path,
                 format_args!(
                     "decision on `{owner}` references `{by}`, whose actor is not the user"
                 ),
@@ -235,104 +301,152 @@ pub(crate) fn check(
         }
     };
 
-    record_provenance(&doc.project.id, &doc.project.provenance)?;
+    let project = ROOT.key("project");
+    record_provenance(
+        &project.key("provenance"),
+        &doc.project.id,
+        &doc.project.provenance,
+    )?;
 
-    for requirement in &doc.requirements {
+    for (index, requirement) in doc.requirements.iter().enumerate() {
+        let at = requirements.index(index);
         let id = &requirement.id;
-        record_provenance(id, &requirement.provenance)?;
+        record_provenance(&at.key("provenance"), id, &requirement.provenance)?;
+        let status = at.key("status");
         match &requirement.status {
             RequirementStatus::Proposed {} => {}
             RequirementStatus::Confirmed { by } | RequirementStatus::Rejected { by } => {
-                user_decision(id, *by)?;
+                user_decision(&status.key("by"), id, *by)?;
             }
             RequirementStatus::Superseded { replacement, by } => {
-                user_decision(id, *by)?;
-                resolve(id, RecordRef::Requirement(*replacement))?;
+                user_decision(&status.key("by"), id, *by)?;
+                resolve(
+                    &status.key("replacement"),
+                    id,
+                    RecordRef::Requirement(*replacement),
+                )?;
             }
         }
     }
 
-    for entity in &doc.entities {
-        record_provenance(&entity.id, &entity.provenance)?;
-        resolve_kind(&entity.kind, KindUse::Entity, doc, registry)?;
+    for (index, entity) in doc.entities.iter().enumerate() {
+        let at = entities.index(index);
+        record_provenance(&at.key("provenance"), &entity.id, &entity.provenance)?;
+        resolve_kind(
+            &entity.kind,
+            KindUse::Entity,
+            doc,
+            registry,
+            &at.key("kind"),
+        )?;
         if let DecisionStatus::Accepted { by } | DecisionStatus::Rejected { by } = &entity.status {
-            user_decision(&entity.id, *by)?;
+            user_decision(&at.key("status").key("by"), &entity.id, *by)?;
         }
     }
-    for (entity, references) in payload_references {
+    for (index, (entity, references)) in payload_references.iter().enumerate() {
+        let at = entities.index(index);
         for reference in references {
-            resolve(entity, *reference)?;
+            resolve(&at.key("data"), entity, *reference)?;
         }
     }
 
-    for artifact in &doc.artifacts {
-        record_provenance(&artifact.id, &artifact.provenance)?;
-        resolve_kind(&artifact.kind, KindUse::Artifact, doc, registry)?;
+    for (index, artifact) in doc.artifacts.iter().enumerate() {
+        let at = artifacts.index(index);
+        record_provenance(&at.key("provenance"), &artifact.id, &artifact.provenance)?;
+        resolve_kind(
+            &artifact.kind,
+            KindUse::Artifact,
+            doc,
+            registry,
+            &at.key("kind"),
+        )?;
         if let Some(content) = &artifact.content {
-            provenance(&artifact.id, content.provenance)?;
+            provenance(
+                &at.key("content").key("provenance"),
+                &artifact.id,
+                content.provenance,
+            )?;
         }
     }
 
     // Rule 4.
-    for link in &doc.links {
-        record_provenance(&link.id, &link.provenance)?;
-        let codec = resolve_kind(&link.kind, KindUse::Link, doc, registry)?;
+    for (index, link) in doc.links.iter().enumerate() {
+        let at = links.index(index);
+        record_provenance(&at.key("provenance"), &link.id, &link.provenance)?;
+        let codec = resolve_kind(&link.kind, KindUse::Link, doc, registry, &at.key("kind"))?;
         let rule = codec
             .link_rules()
             .iter()
             .find(|rule| rule.name == link.kind.name())
             .expect("resolve_kind found the link rule");
-        if !rule.from.contains(&link.from.record_type())
-            || !rule.to.contains(&link.to.record_type())
+        for (end, reference, allowed) in [("from", link.from, rule.from), ("to", link.to, rule.to)]
         {
-            return fail(
-                Rule::LinkEndpoints,
-                format_args!(
-                    "link `{}` of kind `{}` does not allow {:?} -> {:?}",
-                    link.id,
-                    link.kind.as_str(),
-                    link.from.record_type(),
-                    link.to.record_type()
-                ),
-            );
+            if !allowed.contains(&reference.record_type()) {
+                return fail(
+                    Rule::LinkEndpoints,
+                    &at.key(end),
+                    format_args!(
+                        "link `{}` of kind `{}` does not allow {:?} -> {:?}",
+                        link.id,
+                        link.kind.as_str(),
+                        link.from.record_type(),
+                        link.to.record_type()
+                    ),
+                );
+            }
         }
-        resolve(&link.id, link.from)?;
-        resolve(&link.id, link.to)?;
+        resolve(&at.key("from"), &link.id, link.from)?;
+        resolve(&at.key("to"), &link.id, link.to)?;
     }
 
-    for plan in &doc.plans {
-        record_provenance(&plan.id, &plan.provenance)?;
+    for (p, plan) in doc.plans.iter().enumerate() {
+        let plan_at = plans.index(p);
+        let tasks = plan_at.key("tasks");
+        record_provenance(&plan_at.key("provenance"), &plan.id, &plan.provenance)?;
         if let PlanStatus::Approved { by } | PlanStatus::Archived { by } = &plan.status {
-            user_decision(&plan.id, *by)?;
+            user_decision(&plan_at.key("status").key("by"), &plan.id, *by)?;
         }
         let local: BTreeSet<TaskId> = plan.tasks.iter().map(|t| t.id).collect();
-        for task in &plan.tasks {
+        for (t, task) in plan.tasks.iter().enumerate() {
+            let at = tasks.index(t);
             let id = &task.id;
-            resolve_kind(&task.action, KindUse::Action, doc, registry)?;
+            resolve_kind(
+                &task.action,
+                KindUse::Action,
+                doc,
+                registry,
+                &at.key("action"),
+            )?;
             if let TaskDisposition::Skipped { by } | TaskDisposition::Cancelled { by } =
                 &task.disposition
             {
-                user_decision(id, *by)?;
+                user_decision(&at.key("disposition").key("by"), id, *by)?;
             }
-            for dependency in &task.depends_on {
+            for (i, dependency) in task.depends_on.iter().enumerate() {
                 if !local.contains(dependency) {
                     return fail(
                         Rule::TaskDependencies,
+                        &at.key("depends_on").index(i),
                         format_args!(
                             "task `{id}` depends on `{dependency}`, which is not in its plan"
                         ),
                     );
                 }
             }
-            for input in &task.inputs {
-                resolve(id, *input)?;
+            for (i, input) in task.inputs.iter().enumerate() {
+                resolve(&at.key("inputs").index(i), id, *input)?;
             }
-            for output in &task.expected_outputs {
-                resolve(id, RecordRef::Artifact(*output))?;
+            for (i, output) in task.expected_outputs.iter().enumerate() {
+                resolve(
+                    &at.key("expected_outputs").index(i),
+                    id,
+                    RecordRef::Artifact(*output),
+                )?;
             }
             // Rule 6.
-            for addressed in &task.addresses {
-                resolve(id, RecordRef::Requirement(*addressed))?;
+            let addresses = at.key("addresses");
+            for (i, addressed) in task.addresses.iter().enumerate() {
+                resolve(&addresses.index(i), id, RecordRef::Requirement(*addressed))?;
                 let requirement = doc
                     .requirements
                     .iter()
@@ -341,36 +455,55 @@ pub(crate) fn check(
                 if !matches!(requirement.status, RequirementStatus::Confirmed { .. }) {
                     return fail(
                         Rule::AddressesConfirmed,
+                        &addresses.index(i),
                         format_args!("task `{id}` addresses `{addressed}`, which is not confirmed"),
                     );
                 }
             }
         }
-        check_acyclic(plan)?;
+        check_acyclic(plan, &tasks)?;
     }
 
     // Rule 8.
-    for validation in &doc.validations {
+    for (index, validation) in doc.validations.iter().enumerate() {
+        let at = validations.index(index);
         let id = &validation.id;
-        resolve_kind(&validation.check, KindUse::Check, doc, registry)?;
-        match provenance(id, validation.provenance)? {
+        resolve_kind(
+            &validation.check,
+            KindUse::Check,
+            doc,
+            registry,
+            &at.key("check"),
+        )?;
+        match provenance(&at.key("provenance"), id, validation.provenance)? {
             Actor::Tool { .. } | Actor::System { .. } => {}
             _ => {
                 return fail(
                     Rule::ValidationActor,
+                    &at.key("provenance"),
                     format_args!("validation result `{id}` must come from a tool or the system"),
                 );
             }
         }
-        for subject in &validation.subjects {
-            resolve(id, RecordRef::Artifact(subject.artifact))?;
+        for (i, subject) in validation.subjects.iter().enumerate() {
+            let subject_at = at.key("subjects");
+            resolve(
+                &subject_at.index(i).key("artifact"),
+                id,
+                RecordRef::Artifact(subject.artifact),
+            )?;
         }
-        for requirement in &validation.requirements {
-            resolve(id, RecordRef::Requirement(*requirement))?;
+        for (i, requirement) in validation.requirements.iter().enumerate() {
+            resolve(
+                &at.key("requirements").index(i),
+                id,
+                RecordRef::Requirement(*requirement),
+            )?;
         }
         if validation.diagnostics.len() > MAX_DIAGNOSTICS {
             return fail(
                 Rule::Limit,
+                &at.key("diagnostics"),
                 format_args!(
                     "validation result `{id}` has {} diagnostics; the limit is {MAX_DIAGNOSTICS}",
                     validation.diagnostics.len()
@@ -382,11 +515,29 @@ pub(crate) fn check(
     // References from provenance records (`inputs`, task-run activities) are
     // historical and intentionally not resolved. Unreferenced provenance
     // records are kept, because provenance is append-only.
+
+    // Rule 13, after the core rules, so that domain rules can rely on them.
+    for entry in &doc.domains {
+        let codec = registry
+            .get(entry.id.as_str())
+            .expect("the version check found every listed domain");
+        if let Err(error) = codec.check_project(doc) {
+            let (path, message) = match error {
+                crate::domain::DomainError::Invalid { path, message } => (path, message),
+                other => (FieldPath::root(), other.to_string()),
+            };
+            return Err(InvariantError {
+                rule: Rule::DomainRule,
+                path,
+                message: format!("domain `{}`: {message}", entry.id.as_str()),
+            });
+        }
+    }
     Ok(())
 }
 
 /// Rule 5: the dependency graph of a plan has no cycles.
-fn check_acyclic(plan: &crate::model::Plan) -> Result<(), InvariantError> {
+fn check_acyclic(plan: &crate::model::Plan, tasks: &Loc<'_>) -> Result<(), InvariantError> {
     #[derive(Clone, Copy, PartialEq)]
     enum State {
         InProgress,
@@ -399,8 +550,14 @@ fn check_acyclic(plan: &crate::model::Plan) -> Result<(), InvariantError> {
         .collect();
     let mut state: BTreeMap<TaskId, State> = BTreeMap::new();
     let cycle = |task: TaskId| {
+        let index = plan
+            .tasks
+            .iter()
+            .position(|t| t.id == task)
+            .expect("a task of the plan");
         fail(
             Rule::TaskDependencies,
+            &tasks.index(index).key("depends_on"),
             format_args!("plan `{}` has a dependency cycle through `{task}`", plan.id),
         )
     };

@@ -46,6 +46,9 @@ pub struct Applied {
 }
 
 /// A change set was rejected. The project is unchanged.
+///
+/// Field paths in the error are relative to the failing operation when
+/// `operation` is set, and relative to the resulting document otherwise.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{}{kind}", .operation.map(|i| format!("operation {i}: ")).unwrap_or_default())]
 pub struct WriteError {
@@ -151,7 +154,7 @@ impl Project {
     }
 }
 
-fn provenance_record(
+pub(crate) fn provenance_record(
     id: ProvenanceId,
     source: &Source,
     inputs: Vec<crate::model::InputRef>,
@@ -397,9 +400,14 @@ impl<'s, 'e, 'r> Writer<'s, 'e, 'r> {
     }
 
     fn normalize(&self, kind: &Kind, data: &Value) -> Result<Payload, WriteErrorKind> {
-        let codec =
-            invariants::resolve_kind(kind, KindUse::Entity, &self.document, self.env.registry)
-                .map_err(WriteErrorKind::Invariant)?;
+        let codec = invariants::resolve_kind(
+            kind,
+            KindUse::Entity,
+            &self.document,
+            self.env.registry,
+            &crate::path::ROOT.key("kind"),
+        )
+        .map_err(WriteErrorKind::Invariant)?;
         let normalized = codec
             .normalize_entity(kind.name(), data)
             .map_err(WriteErrorKind::Payload)?;
@@ -757,7 +765,7 @@ impl<'s, 'e, 'r> Writer<'s, 'e, 'r> {
     }
 }
 
-fn bump(provenance: &mut RecordProvenance, by: ProvenanceId) {
+pub(crate) fn bump(provenance: &mut RecordProvenance, by: ProvenanceId) {
     provenance.rev = provenance.rev.saturating_add(1);
     provenance.modified = by;
 }
@@ -793,7 +801,7 @@ fn plan_mut(document: &mut ProjectDocument, id: PlanId) -> &mut Plan {
 }
 
 /// Restores the canonical order of every collection.
-fn sort(document: &mut ProjectDocument) {
+pub(crate) fn sort(document: &mut ProjectDocument) {
     document.domains.sort_by(|a, b| a.id.cmp(&b.id));
     document.provenance.sort_by_key(|r| r.id);
     document.requirements.sort_by_key(|r| r.id);

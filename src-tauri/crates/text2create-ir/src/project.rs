@@ -4,50 +4,119 @@ use crate::domain::{CORE_DOMAIN, DomainError, DomainRegistry};
 use crate::ids::{EntityId, RecordRef};
 use crate::invariants::{self, InvariantError, KindUse, Rule};
 use crate::model::{FORMAT_SCHEMA, FORMAT_VERSION, ProjectDocument, ValidationResult};
-use crate::strict::{self, StrictJsonError};
+use crate::path::{FieldPath, ROOT};
+use crate::strict::{self, StrictJsonError, at};
 use serde_json::Value;
 
 /// Why a document could not be loaded. Loading never modifies its input.
+///
+/// [`LoadError::path`] gives the location of the invalid data as a JSON
+/// Pointer, and the `Display` text is a message that can be shown to the user.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
     /// Size limit or strict JSON parsing.
     #[error(transparent)]
     Json(#[from] StrictJsonError),
-    #[error("not a Project IR document: {0}")]
-    NotProjectIr(&'static str),
-    #[error("format version {found} is newer than the supported version {supported}")]
-    NewerFormat { found: u64, supported: u32 },
+    #[error("not a Project IR document: {}{reason}", at(path))]
+    NotProjectIr {
+        path: FieldPath,
+        reason: &'static str,
+    },
     #[error(
-        "format version {found} is older than the supported version {supported} and needs a migration, which is not available yet"
+        "{}format version {found} is newer than the supported version {supported}",
+        at(&self.path())
+    )]
+    NewerFormat { found: u64, supported: u32 },
+    /// The document must be migrated with [`Project::migrate`] first.
+    #[error(
+        "{}format version {found} is older than the supported version {supported}; the project must be migrated",
+        at(&self.path())
     )]
     OlderFormat { found: u64, supported: u32 },
-    #[error("domain `{0}` is not available in this build")]
-    UnknownDomain(String),
-    #[error("domain `{id}` version {found} is newer than the supported version {supported}")]
+    /// `index` is the position in `domains`.
+    #[error("{}domain `{id}` is not available in this build", at(&self.path()))]
+    UnknownDomain { index: usize, id: String },
+    #[error(
+        "{}domain `{id}` version {found} is newer than the supported version {supported}",
+        at(&self.path())
+    )]
     NewerDomain {
+        index: usize,
         id: String,
         found: u64,
         supported: u32,
     },
+    /// The document must be migrated with [`Project::migrate`] first.
     #[error(
-        "domain `{id}` version {found} is older than the supported version {supported} and needs a migration, which is not available yet"
+        "{}domain `{id}` version {found} is older than the supported version {supported}; the project must be migrated",
+        at(&self.path())
     )]
     OlderDomain {
+        index: usize,
         id: String,
         found: u64,
         supported: u32,
     },
-    /// Typed parsing failed. The message includes the line and column.
-    #[error("schema violation: {0}")]
-    Schema(serde_json::Error),
-    /// A domain codec rejected an entity payload.
-    #[error("entity `{entity}`: {error}")]
+    /// Typed parsing failed: a missing or unknown field, or an invalid value.
+    /// The message includes the line and column.
+    #[error("schema violation {}{error}", at(path))]
+    Schema {
+        path: FieldPath,
+        #[source]
+        error: serde_json::Error,
+    },
+    /// A domain codec rejected the payload of the entity at `index`.
+    #[error("{}entity `{entity}`: {}", at(&self.path()), domain_message(error))]
     Payload {
+        index: usize,
         entity: EntityId,
         error: DomainError,
     },
     #[error(transparent)]
     Invariant(#[from] InvariantError),
+}
+
+/// The message of a domain error without its relative path, for errors that
+/// report the path relative to the document instead.
+pub(crate) fn domain_message(error: &DomainError) -> String {
+    match error {
+        DomainError::Invalid { message, .. } => format!("invalid payload: {message}"),
+        other => other.to_string(),
+    }
+}
+
+impl LoadError {
+    /// The location of the invalid data, as a JSON Pointer into the document.
+    pub fn path(&self) -> FieldPath {
+        let root = FieldPath::root();
+        match self {
+            Self::Json(StrictJsonError::Json { path, .. }) => path.clone(),
+            Self::Json(StrictJsonError::TooLarge { .. }) => root,
+            Self::NotProjectIr { path, .. } | Self::Schema { path, .. } => path.clone(),
+            Self::NewerFormat { .. } | Self::OlderFormat { .. } => {
+                root.key("format").key("version")
+            }
+            Self::UnknownDomain { index, .. } => root.key("domains").index(*index).key("id"),
+            Self::NewerDomain { index, .. } | Self::OlderDomain { index, .. } => {
+                root.key("domains").index(*index).key("version")
+            }
+            Self::Payload { index, error, .. } => {
+                let entity = root.key("entities").index(*index);
+                match error {
+                    DomainError::UnknownKind(_) => entity.key("kind"),
+                    DomainError::Invalid { path, .. } => entity.key("data").join(path),
+                    DomainError::NoMigration { .. } => entity.key("data"),
+                }
+            }
+            Self::Invariant(error) => error.path.clone(),
+        }
+    }
+
+    /// Whether the document was written with an older format or domain
+    /// version. Such a document can only be opened after [`Project::migrate`].
+    pub fn needs_migration(&self) -> bool {
+        matches!(self, Self::OlderFormat { .. } | Self::OlderDomain { .. })
+    }
 }
 
 /// A Project IR document that passed every check of the loading pipeline.
@@ -66,7 +135,8 @@ impl Project {
         check_versions(&raw, registry)?;
         drop(raw);
         // Parse the original bytes again so that errors report a line and column.
-        let document: ProjectDocument = serde_json::from_slice(bytes).map_err(LoadError::Schema)?;
+        let document: ProjectDocument = crate::path::from_slice(bytes)
+            .map_err(|(path, error)| LoadError::Schema { path, error })?;
         let payload_references = normalize_payloads(&document, registry)?;
         invariants::check(&document, registry, &payload_references)?;
         Ok(Self { document })
@@ -106,16 +176,24 @@ impl Project {
 /// parsing, so that a document from a newer version gets a precise error.
 /// Malformed entries are left to typed parsing.
 fn check_versions(raw: &Value, registry: &DomainRegistry) -> Result<(), LoadError> {
-    let format = raw
-        .get("format")
-        .ok_or(LoadError::NotProjectIr("missing `format`"))?;
+    let format_path = FieldPath::root().key("format");
+    let format = raw.get("format").ok_or(LoadError::NotProjectIr {
+        path: format_path.clone(),
+        reason: "missing `format`",
+    })?;
     if format.get("schema").and_then(Value::as_str) != Some(FORMAT_SCHEMA) {
-        return Err(LoadError::NotProjectIr("unexpected `format.schema`"));
+        return Err(LoadError::NotProjectIr {
+            path: format_path.key("schema"),
+            reason: "unexpected `format.schema`",
+        });
     }
     let found = format
         .get("version")
         .and_then(Value::as_u64)
-        .ok_or(LoadError::NotProjectIr("invalid `format.version`"))?;
+        .ok_or(LoadError::NotProjectIr {
+            path: format_path.key("version"),
+            reason: "invalid `format.version`",
+        })?;
     let supported = FORMAT_VERSION;
     if found > u64::from(supported) {
         return Err(LoadError::NewerFormat { found, supported });
@@ -125,7 +203,7 @@ fn check_versions(raw: &Value, registry: &DomainRegistry) -> Result<(), LoadErro
     }
 
     let entries = raw.get("domains").and_then(Value::as_array);
-    for entry in entries.into_iter().flatten() {
+    for (index, entry) in entries.into_iter().flatten().enumerate() {
         let (Some(id), Some(found)) = (
             entry.get("id").and_then(Value::as_str),
             entry.get("version").and_then(Value::as_u64),
@@ -136,12 +214,14 @@ fn check_versions(raw: &Value, registry: &DomainRegistry) -> Result<(), LoadErro
         if id == CORE_DOMAIN {
             continue;
         }
-        let codec = registry
-            .get(id)
-            .ok_or_else(|| LoadError::UnknownDomain(id.to_owned()))?;
+        let codec = registry.get(id).ok_or_else(|| LoadError::UnknownDomain {
+            index,
+            id: id.to_owned(),
+        })?;
         let supported = codec.version();
         if found > u64::from(supported) {
             return Err(LoadError::NewerDomain {
+                index,
                 id: id.to_owned(),
                 found,
                 supported,
@@ -149,6 +229,7 @@ fn check_versions(raw: &Value, registry: &DomainRegistry) -> Result<(), LoadErro
         }
         if found < u64::from(supported) {
             return Err(LoadError::OlderDomain {
+                index,
                 id: id.to_owned(),
                 found,
                 supported,
@@ -166,17 +247,27 @@ pub(crate) fn normalize_payloads(
     registry: &DomainRegistry,
 ) -> Result<Vec<(EntityId, Vec<RecordRef>)>, LoadError> {
     let mut references = Vec::with_capacity(document.entities.len());
-    for entity in &document.entities {
-        let codec = invariants::resolve_kind(&entity.kind, KindUse::Entity, document, registry)?;
+    let entities = ROOT.key("entities");
+    for (index, entity) in document.entities.iter().enumerate() {
+        let at = entities.index(index);
+        let codec = invariants::resolve_kind(
+            &entity.kind,
+            KindUse::Entity,
+            document,
+            registry,
+            &at.key("kind"),
+        )?;
         let normalized = codec
             .normalize_entity(entity.kind.name(), entity.data.as_value())
             .map_err(|error| LoadError::Payload {
+                index,
                 entity: entity.id,
                 error,
             })?;
         if normalized.value != *entity.data.as_value() {
             return Err(InvariantError {
                 rule: Rule::CanonicalPayload,
+                path: at.key("data").field_path(),
                 message: format!(
                     "the payload of entity `{}` is not in canonical form",
                     entity.id

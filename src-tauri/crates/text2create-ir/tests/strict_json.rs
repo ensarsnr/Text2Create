@@ -41,7 +41,8 @@ fn repeated_key_inside_a_document_and_payload_is_rejected_with_its_location() {
     let line = text[..text.find(field).unwrap()].lines().count();
     let input = text.replacen(field, &format!("{field} \"label\": \"Other\","), 1);
     match load(input.as_bytes()) {
-        Err(LoadError::Json(StrictJsonError::Json(error))) => {
+        Err(LoadError::Json(StrictJsonError::Json { error, path })) => {
+            assert_eq!(path.as_str(), "/entities/0/data");
             assert!(
                 error.to_string().contains("repeated key `label`"),
                 "{error}"
@@ -143,7 +144,10 @@ fn malformed_input_is_rejected() {
 #[test]
 fn errors_report_line_and_column() {
     let error = match strict::parse(b"{\n  \"a\": 1,\n  \"a\": 2\n}") {
-        Err(StrictJsonError::Json(error)) => error,
+        Err(StrictJsonError::Json { error, path }) => {
+            assert_eq!(path.as_str(), "");
+            error
+        }
         other => panic!("unexpected result: {other:?}"),
     };
     assert_eq!(error.line(), 3);

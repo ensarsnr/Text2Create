@@ -14,7 +14,7 @@ use text2create_ir::ids::ProjectId;
 use text2create_ir::model::ProjectDocument;
 use text2create_ir::scalar::Text;
 use text2create_ir::source::{Source, SystemClock, UuidV7Generator};
-use text2create_store::{OpenProject, ProjectStore};
+use text2create_store::{OpenProject, ProjectStore, StoreError};
 
 /// Directory under the application data directory that holds the projects.
 pub const PROJECTS_DIRECTORY: &str = "projects";
@@ -60,8 +60,12 @@ fn view(project: &OpenProject) -> ProjectView {
 
 impl ProjectService {
     pub fn new(root: PathBuf) -> Self {
+        Self::with_registry(root, DomainRegistry::new())
+    }
+
+    fn with_registry(root: PathBuf, registry: DomainRegistry) -> Self {
         Self {
-            store: ProjectStore::new(root, Arc::new(DomainRegistry::new())),
+            store: ProjectStore::new(root, Arc::new(registry)),
             current: None,
             clock: SystemClock,
             ids: UuidV7Generator,
@@ -118,13 +122,47 @@ impl ProjectService {
     }
 
     /// Opens a project. The previously open project is closed first.
+    ///
+    /// A project written with an older format or domain version is not
+    /// opened and not changed. Migrating it changes the stored project
+    /// permanently, so it requires the user's explicit approval (ADR-0011).
+    /// The approval flow does not exist yet (#26), so the application never
+    /// migrates; the error describes the migration that would be needed.
     pub fn open(&mut self, id: &str) -> Result<ProjectView, String> {
         let id: ProjectId = id.parse().map_err(|e| format!("Project: {e}"))?;
         self.close()?;
-        let project = self.store.open(id).map_err(|e| e.to_string())?;
+        let project = match self.store.open(id) {
+            Ok(project) => project,
+            Err(StoreError::NeedsMigration(_)) => return Err(self.migration_required(id)),
+            Err(error) => return Err(error.to_string()),
+        };
         let result = view(&project);
         self.current = Some(project);
         Ok(result)
+    }
+
+    /// The message for a project that needs a migration that cannot be
+    /// approved yet. Planning reads the project without changing it.
+    fn migration_required(&self, id: ProjectId) -> String {
+        let steps = match self.store.plan_migration(id) {
+            Ok(plan) => plan
+                .steps
+                .iter()
+                .map(|step| match &step.domain {
+                    None => format!("format {} to {}", step.from, step.to),
+                    Some(domain) => {
+                        format!("domain `{}` {} to {}", domain.as_str(), step.from, step.to)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            Err(error) => return error.to_string(),
+        };
+        format!(
+            "This project was saved by an older version of Text2Create and must be migrated \
+             ({steps}) before it can be opened. A migration needs your approval, which this \
+             version cannot ask for yet. The project was not changed."
+        )
     }
 
     /// Applies a change set to the open project as a user edit and saves it.
@@ -288,6 +326,89 @@ mod tests {
         );
         // Nothing was written to the database by the rejected calls.
         assert_eq!(service.list().unwrap().projects[0].name, "Valid");
+    }
+
+    /// A domain whose version 2 renamed the payload field `pin` to `gpio`.
+    struct Sensor(u32);
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct V1 {
+        pin: u32,
+    }
+    impl text2create_ir::domain::EntityPayload for V1 {}
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct V2 {
+        gpio: u32,
+    }
+    impl text2create_ir::domain::EntityPayload for V2 {}
+
+    impl text2create_ir::domain::DomainCodec for Sensor {
+        fn id(&self) -> &'static str {
+            "sensor"
+        }
+        fn version(&self) -> u32 {
+            self.0
+        }
+        fn entity_kinds(&self) -> &'static [&'static str] {
+            &["probe"]
+        }
+        fn normalize_entity(
+            &self,
+            _kind: &str,
+            data: &serde_json::Value,
+        ) -> Result<text2create_ir::domain::NormalizedPayload, text2create_ir::domain::DomainError>
+        {
+            use text2create_ir::domain::normalize_typed;
+            if self.0 == 1 {
+                normalize_typed::<V1>(data)
+            } else {
+                normalize_typed::<V2>(data)
+            }
+        }
+        fn migrate_entity(
+            &self,
+            _kind: &str,
+            _from: u32,
+            data: serde_json::Value,
+        ) -> Result<serde_json::Value, text2create_ir::domain::DomainError> {
+            Ok(serde_json::json!({"gpio": data["pin"]}))
+        }
+    }
+
+    fn sensor(version: u32) -> DomainRegistry {
+        DomainRegistry::new().register(Sensor(version)).unwrap()
+    }
+
+    #[test]
+    fn an_older_project_is_never_migrated_without_approval() {
+        let dir = TempDir::new("migration");
+        let mut old = ProjectService::with_registry(dir.0.clone(), sensor(1));
+        let created = old.create("Probe", None).unwrap();
+        old.apply_user_changes(
+            r#"{"inputs": [], "operations": [{"op": "declare_domain", "domain": "sensor"},
+            {"op": "add_entity", "kind": "sensor.probe", "name": "Probe", "data": {"pin": 4}}]}"#,
+        )
+        .unwrap();
+        old.close().unwrap();
+        let project = dir.0.join(&created.id);
+        let database = project.join(text2create_store::DATABASE_FILE);
+        let before = fs::read(&database).unwrap();
+
+        let mut new = ProjectService::with_registry(dir.0.clone(), sensor(2));
+        let error = new.open(&created.id).unwrap_err();
+        assert!(error.contains("domain `sensor` 1 to 2"), "{error}");
+        assert!(error.contains("approval"), "{error}");
+        assert!(error.contains("not changed"), "{error}");
+        // Opening again gives the same answer; nothing was migrated or backed up.
+        assert_eq!(new.open(&created.id).unwrap_err(), error);
+        assert_eq!(fs::read(&database).unwrap(), before);
+        assert!(!project.join(text2create_store::BACKUPS_DIRECTORY).exists());
+        assert!(new.apply_user_changes("{}").is_err(), "no project is open");
+        // The version that saved it still opens it.
+        old.open(&created.id).unwrap();
     }
 
     #[test]

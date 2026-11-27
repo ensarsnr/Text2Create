@@ -5,6 +5,7 @@
 //! parser also rejects every number that is not an integer in the 64-bit range,
 //! because the Project IR contains no floating-point numbers.
 
+use crate::path::FieldPath;
 use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value};
 use std::fmt;
@@ -21,11 +22,36 @@ pub const MAX_NESTING_DEPTH: usize = 127;
 #[derive(Debug, thiserror::Error)]
 pub enum StrictJsonError {
     /// The input exceeds [`MAX_DOCUMENT_BYTES`].
-    #[error("document is {size} bytes; the limit is {limit} bytes")]
+    #[error("{}document is {size} bytes; the limit is {limit} bytes", at(&FieldPath::root()))]
     TooLarge { size: usize, limit: usize },
-    /// Malformed or disallowed JSON. The message includes the line and column.
-    #[error(transparent)]
-    Json(#[from] serde_json::Error),
+    /// Malformed or disallowed JSON at `path`. The message includes the line
+    /// and column. For a repeated key, `path` is the object that repeats it.
+    #[error("{}{error}", at(path))]
+    Json {
+        path: FieldPath,
+        #[source]
+        error: serde_json::Error,
+    },
+}
+
+/// The location prefix of an error message: `at <path>: `, or
+/// `at the document root: ` for the root.
+pub(crate) fn at(path: &FieldPath) -> String {
+    if path.as_str().is_empty() {
+        "at the document root: ".to_owned()
+    } else {
+        format!("at `{path}`: ")
+    }
+}
+
+/// The location prefix for a path relative to a part of the document, such as
+/// a payload: nothing for the part itself.
+pub(crate) fn at_relative(path: &FieldPath) -> String {
+    if path.as_str().is_empty() {
+        String::new()
+    } else {
+        format!("at `{path}`: ")
+    }
 }
 
 /// Parses untrusted JSON bytes into a [`Value`].
@@ -46,9 +72,36 @@ pub fn parse(bytes: &[u8]) -> Result<Value, StrictJsonError> {
         });
     }
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
-    let value = Seed { depth: 0 }.deserialize(&mut deserializer)?;
-    deserializer.end()?;
+    let value = match (Seed { depth: 0 }).deserialize(&mut deserializer) {
+        Ok(value) => value,
+        // Parse again with path tracking only to locate the error.
+        Err(error) => return Err(locate(bytes, error)),
+    };
+    deserializer.end().map_err(|error| StrictJsonError::Json {
+        path: FieldPath::root(),
+        error,
+    })?;
     Ok(value)
+}
+
+/// Parses `bytes` again with path tracking to find where `error` occurred.
+fn locate(bytes: &[u8], error: serde_json::Error) -> StrictJsonError {
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let mut track = serde_path_to_error::Track::new();
+    let tracked = Seed { depth: 0 }.deserialize(serde_path_to_error::Deserializer::new(
+        &mut deserializer,
+        &mut track,
+    ));
+    match tracked {
+        Err(error) => StrictJsonError::Json {
+            path: FieldPath::from_serde(&track.path()),
+            error,
+        },
+        Ok(_) => StrictJsonError::Json {
+            path: FieldPath::root(),
+            error,
+        },
+    }
 }
 
 /// Deserializes one value nested inside `depth` arrays or objects.

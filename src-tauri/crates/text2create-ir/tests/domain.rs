@@ -5,7 +5,7 @@ mod common;
 use common::{assert_rule, error_text, id, mutate};
 use serde_json::{Value, json};
 use text2create_ir::domain::DomainError;
-use text2create_ir::{LoadError, Rule};
+use text2create_ir::{FieldPath, LoadError, Rule};
 
 fn payload_error(result: Result<text2create_ir::Project, LoadError>) -> DomainError {
     match result {
@@ -36,14 +36,17 @@ fn payload_validation_runs_after_decoding() {
     let error = payload_error(mutate(|v| v["entities"][2]["data"]["parts"] = json!([])));
     assert_eq!(
         error,
-        DomainError::Invalid("an assembly needs parts".to_owned())
+        DomainError::invalid_at(FieldPath::root().key("parts"), "an assembly needs parts")
     );
     let error = payload_error(mutate(|v| {
         v["entities"][2]["data"]["parts"] = json!([id("ent", 22), id("ent", 21)]);
     }));
     assert_eq!(
         error,
-        DomainError::Invalid("parts must be sorted and unique".to_owned())
+        DomainError::invalid_at(
+            FieldPath::root().key("parts"),
+            "parts must be sorted and unique"
+        )
     );
 }
 
