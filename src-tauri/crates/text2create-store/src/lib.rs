@@ -13,8 +13,8 @@
 //! written only with the output of [`Project::create`] or [`Project::apply`],
 //! and read only through [`Project::load`], so every IR rule applies to stored
 //! data. A document written with an older format or domain version is opened
-//! only after [`ProjectStore::migrate`] has backed it up and migrated it with
-//! [`Project::migrate`]. This crate adds no other way to change a project,
+//! only after the user approved a [`MigrationPlan`] and [`ProjectStore::migrate`]
+//! has backed it up and migrated it with [`Project::migrate`]. This crate adds no other way to change a project,
 //! and it has no Tauri dependency.
 
 #![forbid(unsafe_code)]
@@ -34,7 +34,7 @@ use text2create_ir::ids::ProjectId;
 use text2create_ir::scalar::{Text, Timestamp};
 use text2create_ir::source::{Clock, IdGenerator, Source};
 use text2create_ir::{
-    Applied, LoadError, MigrateError, MigrationStep, Project, WriteEnv, WriteError,
+    Applied, LoadError, MigrateError, MigrationStep, PendingStep, Project, WriteEnv, WriteError,
 };
 
 /// File name of the project database inside a project directory.
@@ -65,8 +65,8 @@ pub enum StoreError {
     /// because it comes from a newer version of Text2Create.
     #[error("the stored Project IR was rejected: {0}")]
     InvalidIr(#[source] LoadError),
-    /// The project was written with an older format or domain version. Call
-    /// [`ProjectStore::migrate`] to back it up and migrate it.
+    /// The project was written with an older format or domain version. It
+    /// opens only after the user approved its [`ProjectStore::plan_migration`].
     #[error("the project must be migrated before it can be opened: {0}")]
     NeedsMigration(#[source] LoadError),
     /// The migration failed; the project was not changed.
@@ -80,6 +80,10 @@ pub enum StoreError {
     Write(#[from] WriteError),
     #[error("the project was saved by another connection since it was opened; reopen it")]
     Conflict,
+    /// The project or the available versions changed after the migration
+    /// plan was made, so the approved plan no longer describes the migration.
+    #[error("the project changed after the migration was approved; review the migration again")]
+    PlanOutdated,
     #[error("database error: {0}")]
     Sqlite(#[source] rusqlite::Error),
     #[error("file system error: {0}")]
@@ -118,6 +122,17 @@ pub struct ProjectList {
     /// Most recently updated first.
     pub projects: Vec<ProjectSummary>,
     pub unreadable: Vec<UnreadableProject>,
+}
+
+/// What a migration of a stored project will do, to be shown to the user
+/// for approval before [`ProjectStore::migrate`] runs it (ADR-0011).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MigrationPlan {
+    pub project: ProjectId,
+    /// The stored revision the plan was made for.
+    pub revision: i64,
+    /// In the order they will be applied.
+    pub steps: Vec<PendingStep>,
 }
 
 /// The result of [`ProjectStore::migrate`].
@@ -214,8 +229,27 @@ impl ProjectStore {
         })
     }
 
-    /// Backs up and migrates a project written with an older format or domain
-    /// version, so that it can be opened.
+    /// The migration a project written with an older format or domain
+    /// version needs before it can be opened. Changes nothing.
+    pub fn plan_migration(&self, id: ProjectId) -> Result<MigrationPlan, StoreError> {
+        let (connection, row, _) = self.connect(id)?;
+        let steps = pending(&row, &self.registry)?;
+        drop(connection);
+        Ok(MigrationPlan {
+            project: id,
+            revision: row.revision,
+            steps,
+        })
+    }
+
+    /// Backs up and migrates a project as described by `plan`, so that it can
+    /// be opened.
+    ///
+    /// A migration changes the stored project permanently, and older builds
+    /// can no longer open it. Call this only after the user approved `plan`
+    /// (ADR-0011). If the project or the available versions changed since the
+    /// plan was made, nothing is changed and the error is
+    /// [`StoreError::PlanOutdated`].
     ///
     /// The migration runs in memory first; a failing migration changes
     /// nothing and creates no backup. Then the database is copied with SQLite
@@ -225,15 +259,14 @@ impl ProjectStore {
     /// project is unchanged and the backup is kept.
     pub fn migrate(
         &self,
-        id: ProjectId,
+        plan: &MigrationPlan,
         clock: &mut dyn Clock,
         ids: &mut dyn IdGenerator,
     ) -> Result<MigrationReport, StoreError> {
+        let id = plan.project;
         let (mut connection, row, directory) = self.connect(id)?;
-        match Project::load(row.document.as_bytes(), &self.registry) {
-            Ok(_) => return Err(StoreError::Migration(MigrateError::UpToDate)),
-            Err(error) if !error.needs_migration() => return Err(StoreError::InvalidIr(error)),
-            Err(_) => {}
+        if row.revision != plan.revision || pending(&row, &self.registry)? != plan.steps {
+            return Err(StoreError::PlanOutdated);
         }
         let mut env = WriteEnv {
             registry: &self.registry,
@@ -243,6 +276,14 @@ impl ProjectStore {
         let migrated =
             Project::migrate(row.document.as_bytes(), &mut env).map_err(StoreError::Migration)?;
         check_metadata(&migrated.project, &row, id)?;
+        if migrated
+            .steps
+            .iter()
+            .map(MigrationStep::pending)
+            .ne(plan.steps.iter().cloned())
+        {
+            return Err(StoreError::PlanOutdated);
+        }
         let last = migrated
             .steps
             .last()
@@ -408,6 +449,14 @@ struct Row {
     name: String,
     revision: i64,
     document: String,
+}
+
+/// The pending migration steps of a stored document.
+fn pending(row: &Row, registry: &DomainRegistry) -> Result<Vec<PendingStep>, StoreError> {
+    Project::pending_migrations(row.document.as_bytes(), registry).map_err(|error| match error {
+        MigrateError::Load(error) => StoreError::InvalidIr(error),
+        other => StoreError::Migration(other),
+    })
 }
 
 /// The copied listing columns must match the document.

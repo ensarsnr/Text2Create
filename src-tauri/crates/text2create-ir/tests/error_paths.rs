@@ -19,6 +19,21 @@ fn mutated(change: impl FnOnce(&mut Value)) -> (String, LoadError) {
     path_of(common::mutate(change))
 }
 
+/// Asserts that `error` reports `path` and that its message contains it.
+#[track_caller]
+fn assert_located(error: &LoadError, path: &str) {
+    assert_eq!(error.path().as_str(), path, "{error}");
+    let expected = if path.is_empty() {
+        "at the document root".to_owned()
+    } else {
+        format!("at `{path}`")
+    };
+    assert!(
+        error.to_string().contains(&expected),
+        "missing `{expected}` in: {error}"
+    );
+}
+
 #[track_caller]
 fn assert_invariant(change: impl FnOnce(&mut Value), rule: Rule, path: &str) {
     let (found, error) = mutated(change);
@@ -333,6 +348,7 @@ fn every_type_change_and_unknown_field_is_rejected_on_its_branch() {
                     same_branch(&found, &mutation),
                     "{fixture}: mutation at `{mutation}` reported at `{found}`: {error}"
                 );
+                assert_located(&error, found.as_str());
                 checked += 1;
             }
         }
@@ -364,7 +380,82 @@ fn every_repeated_key_is_rejected_at_its_object() {
         let error = load(repeated.as_bytes()).expect_err("repeated key accepted");
         assert!(matches!(error, LoadError::Json(_)), "{error}");
         assert_eq!(&error.path(), path, "{error}");
+        assert_located(&error, path.as_str());
         let _ = value;
     }
     assert!(objects.len() > 50);
+}
+
+#[test]
+fn every_load_error_names_its_location_in_its_message() {
+    use text2create_ir::domain::DomainRegistry;
+    use text2create_ir::strict::{MAX_DOCUMENT_BYTES, StrictJsonError};
+    let too_large = vec![b' '; MAX_DOCUMENT_BYTES + 1];
+    let cases: Vec<(LoadError, &str)> = vec![
+        (load(&too_large).unwrap_err(), ""),
+        (load(b"{\"a\": 1, \"a\": 2}").unwrap_err(), ""),
+        (
+            mutated(|v| v["entities"][0]["data"]["size"] = json!(1.5)).1,
+            "/entities/0/data/size",
+        ),
+        (load(b"[]").unwrap_err(), "/format"),
+        (
+            mutated(|v| v["format"]["schema"] = json!("other")).1,
+            "/format/schema",
+        ),
+        (
+            mutated(|v| v["format"]["version"] = json!(2)).1,
+            "/format/version",
+        ),
+        (
+            mutated(|v| v["format"]["version"] = json!(0)).1,
+            "/format/version",
+        ),
+        (
+            mutated(|v| v["domains"][0]["id"] = json!("robotics")).1,
+            "/domains/0/id",
+        ),
+        (
+            mutated(|v| v["domains"][0]["version"] = json!(2)).1,
+            "/domains/0/version",
+        ),
+        (
+            mutated(|v| v["domains"][0]["version"] = json!(0)).1,
+            "/domains/0/version",
+        ),
+        (
+            mutated(|v| v["project"]["name"] = json!(" padded")).1,
+            "/project/name",
+        ),
+        (
+            mutated(|v| v["entities"][1]["data"]["size"] = json!("x")).1,
+            "/entities/1/data/size",
+        ),
+        (
+            mutated(|v| v["links"][1]["provenance"]["rev"] = json!(0)).1,
+            "/links/1/provenance/rev",
+        ),
+        (
+            text2create_ir::Project::load(&read(EXAMPLE), &DomainRegistry::new()).unwrap_err(),
+            "/domains/0/id",
+        ),
+    ];
+    let mut kinds = std::collections::BTreeSet::new();
+    for (error, path) in &cases {
+        assert_located(error, path);
+        kinds.insert(match error {
+            LoadError::Json(StrictJsonError::TooLarge { .. }) => "too large",
+            LoadError::Json(StrictJsonError::Json { .. }) => "json",
+            LoadError::NotProjectIr { .. } => "not ir",
+            LoadError::NewerFormat { .. } => "newer format",
+            LoadError::OlderFormat { .. } => "older format",
+            LoadError::UnknownDomain { .. } => "unknown domain",
+            LoadError::NewerDomain { .. } => "newer domain",
+            LoadError::OlderDomain { .. } => "older domain",
+            LoadError::Schema { .. } => "schema",
+            LoadError::Payload { .. } => "payload",
+            LoadError::Invariant(_) => "invariant",
+        });
+    }
+    assert_eq!(kinds.len(), 11, "every variant is covered: {kinds:?}");
 }

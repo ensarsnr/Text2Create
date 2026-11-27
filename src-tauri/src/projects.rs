@@ -121,23 +121,48 @@ impl ProjectService {
         })
     }
 
-    /// Opens a project. The previously open project is closed first. A
-    /// project written with an older format or domain version is backed up
-    /// and migrated first (ADR-0016).
+    /// Opens a project. The previously open project is closed first.
+    ///
+    /// A project written with an older format or domain version is not
+    /// opened and not changed. Migrating it changes the stored project
+    /// permanently, so it requires the user's explicit approval (ADR-0011).
+    /// The approval flow does not exist yet (#26), so the application never
+    /// migrates; the error describes the migration that would be needed.
     pub fn open(&mut self, id: &str) -> Result<ProjectView, String> {
         let id: ProjectId = id.parse().map_err(|e| format!("Project: {e}"))?;
         self.close()?;
         let project = match self.store.open(id) {
-            Err(StoreError::NeedsMigration(_)) => self
-                .store
-                .migrate(id, &mut self.clock, &mut self.ids)
-                .and_then(|_| self.store.open(id)),
-            result => result,
-        }
-        .map_err(|e| e.to_string())?;
+            Ok(project) => project,
+            Err(StoreError::NeedsMigration(_)) => return Err(self.migration_required(id)),
+            Err(error) => return Err(error.to_string()),
+        };
         let result = view(&project);
         self.current = Some(project);
         Ok(result)
+    }
+
+    /// The message for a project that needs a migration that cannot be
+    /// approved yet. Planning reads the project without changing it.
+    fn migration_required(&self, id: ProjectId) -> String {
+        let steps = match self.store.plan_migration(id) {
+            Ok(plan) => plan
+                .steps
+                .iter()
+                .map(|step| match &step.domain {
+                    None => format!("format {} to {}", step.from, step.to),
+                    Some(domain) => {
+                        format!("domain `{}` {} to {}", domain.as_str(), step.from, step.to)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            Err(error) => return error.to_string(),
+        };
+        format!(
+            "This project was saved by an older version of Text2Create and must be migrated \
+             ({steps}) before it can be opened. A migration needs your approval, which this \
+             version cannot ask for yet. The project was not changed."
+        )
     }
 
     /// Applies a change set to the open project as a user edit and saves it.
@@ -358,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_an_older_project_backs_it_up_and_migrates_it() {
+    fn an_older_project_is_never_migrated_without_approval() {
         let dir = TempDir::new("migration");
         let mut old = ProjectService::with_registry(dir.0.clone(), sensor(1));
         let created = old.create("Probe", None).unwrap();
@@ -368,21 +393,22 @@ mod tests {
         )
         .unwrap();
         old.close().unwrap();
+        let project = dir.0.join(&created.id);
+        let database = project.join(text2create_store::DATABASE_FILE);
+        let before = fs::read(&database).unwrap();
 
         let mut new = ProjectService::with_registry(dir.0.clone(), sensor(2));
-        let opened = new.open(&created.id).unwrap();
-        assert_eq!(
-            opened.document.entities[0].data.as_value(),
-            &serde_json::json!({"gpio": 4})
-        );
-        let backups = dir
-            .0
-            .join(&created.id)
-            .join(text2create_store::BACKUPS_DIRECTORY);
-        assert_eq!(fs::read_dir(backups).unwrap().count(), 1);
-        // The older build refuses the migrated project.
-        old.close().unwrap();
-        assert!(old.open(&created.id).unwrap_err().contains("newer"));
+        let error = new.open(&created.id).unwrap_err();
+        assert!(error.contains("domain `sensor` 1 to 2"), "{error}");
+        assert!(error.contains("approval"), "{error}");
+        assert!(error.contains("not changed"), "{error}");
+        // Opening again gives the same answer; nothing was migrated or backed up.
+        assert_eq!(new.open(&created.id).unwrap_err(), error);
+        assert_eq!(fs::read(&database).unwrap(), before);
+        assert!(!project.join(text2create_store::BACKUPS_DIRECTORY).exists());
+        assert!(new.apply_user_changes("{}").is_err(), "no project is open");
+        // The version that saved it still opens it.
+        old.open(&created.id).unwrap();
     }
 
     #[test]

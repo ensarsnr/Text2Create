@@ -207,6 +207,10 @@ fn failing_migrations_report_the_payload_and_change_nothing() {
         "{error}"
     );
     assert_eq!(error.path().as_str(), "/entities/1/data/label");
+    assert!(
+        error.to_string().contains("at `/entities/1/data/label`"),
+        "{error}"
+    );
 
     // Output that the new version rejects is caught by its codec.
     let error = migrate(&original, &registry_v2(Behavior::Invalid)).unwrap_err();

@@ -16,7 +16,31 @@ use text2create_ir::model::Activity;
 use text2create_ir::scalar::Timestamp;
 use text2create_ir::source::{Clock, IdGenerator, Source};
 use text2create_ir::{LoadError, MigrateError};
-use text2create_store::{BACKUPS_DIRECTORY, DATABASE_FILE, ProjectStore, StoreError};
+use text2create_store::{
+    BACKUPS_DIRECTORY, DATABASE_FILE, MigrationPlan, MigrationReport, ProjectStore, StoreError,
+};
+
+/// Plans a migration and runs it as if the user approved the plan.
+trait Approve {
+    fn migrate_approved(
+        &self,
+        id: ProjectId,
+        clock: &mut dyn Clock,
+        ids: &mut dyn IdGenerator,
+    ) -> Result<MigrationReport, StoreError>;
+}
+
+impl Approve for ProjectStore {
+    fn migrate_approved(
+        &self,
+        id: ProjectId,
+        clock: &mut dyn Clock,
+        ids: &mut dyn IdGenerator,
+    ) -> Result<MigrationReport, StoreError> {
+        let plan = self.plan_migration(id)?;
+        self.migrate(&plan, clock, ids)
+    }
+}
 
 struct TempDir(PathBuf);
 
@@ -208,7 +232,9 @@ fn an_older_project_is_backed_up_migrated_and_opened() {
     );
     assert_eq!(store.list().unwrap().projects.len(), 1);
 
-    let report = store.migrate(id, &mut env.clock, &mut env.ids).unwrap();
+    let report = store
+        .migrate_approved(id, &mut env.clock, &mut env.ids)
+        .unwrap();
     assert_eq!(report.steps.len(), 1);
     assert!(
         report
@@ -263,7 +289,7 @@ fn the_backup_includes_data_that_is_still_in_the_wal_file() {
 
     let report = env
         .store(Sensor::V2)
-        .migrate(id, &mut env.clock, &mut env.ids)
+        .migrate_approved(id, &mut env.clock, &mut env.ids)
         .unwrap();
     assert_eq!(stored(&report.backup).0, latest);
     // The connection that opened the old version can no longer save.
@@ -279,7 +305,9 @@ fn a_failing_migration_changes_nothing_and_creates_no_backup() {
     let id = env.v1_project();
     let before = stored(&env.database(id));
     let store = env.store(Sensor::V2Failing);
-    let error = store.migrate(id, &mut env.clock, &mut env.ids).unwrap_err();
+    let error = store
+        .migrate_approved(id, &mut env.clock, &mut env.ids)
+        .unwrap_err();
     assert!(
         matches!(error, StoreError::Migration(MigrateError::Domain { .. })),
         "{error}"
@@ -301,7 +329,9 @@ fn a_failing_save_keeps_the_project_and_the_backup() {
         .execute_batch("CREATE TRIGGER fail BEFORE UPDATE ON project_ir BEGIN SELECT RAISE(ABORT, 'injected failure'); END;")
         .unwrap();
     let store = env.store(Sensor::V2);
-    let error = store.migrate(id, &mut env.clock, &mut env.ids).unwrap_err();
+    let error = store
+        .migrate_approved(id, &mut env.clock, &mut env.ids)
+        .unwrap_err();
     assert!(error.to_string().contains("injected failure"), "{error}");
     assert_eq!(stored(&path), before);
     let backups = env.backups(id);
@@ -314,7 +344,9 @@ fn a_failing_save_keeps_the_project_and_the_backup() {
         .unwrap()
         .execute_batch("DROP TRIGGER fail;")
         .unwrap();
-    store.migrate(id, &mut env.clock, &mut env.ids).unwrap();
+    store
+        .migrate_approved(id, &mut env.clock, &mut env.ids)
+        .unwrap();
     assert_eq!(env.backups(id).len(), 2);
     store.open(id).unwrap();
 }
@@ -324,7 +356,7 @@ fn newer_and_current_projects_are_not_migrated_or_modified() {
     let mut env = Env::new();
     let id = env.v1_project();
     env.store(Sensor::V2)
-        .migrate(id, &mut env.clock, &mut env.ids)
+        .migrate_approved(id, &mut env.clock, &mut env.ids)
         .unwrap();
     let path = env.database(id);
     let before = fs::read(&path).unwrap();
@@ -341,15 +373,77 @@ fn newer_and_current_projects_are_not_migrated_or_modified() {
         }))
     ));
     assert!(matches!(
-        old.migrate(id, &mut env.clock, &mut env.ids),
+        old.migrate_approved(id, &mut env.clock, &mut env.ids),
         Err(StoreError::InvalidIr(LoadError::NewerDomain { .. }))
     ));
     // A current project needs no migration.
     assert!(matches!(
         env.store(Sensor::V2)
-            .migrate(id, &mut env.clock, &mut env.ids),
+            .migrate_approved(id, &mut env.clock, &mut env.ids),
         Err(StoreError::Migration(MigrateError::UpToDate))
     ));
     assert_eq!(fs::read(&path).unwrap(), before);
     assert_eq!(env.backups(id), backups);
+}
+
+#[test]
+fn planning_a_migration_changes_nothing() {
+    let mut env = Env::new();
+    let id = env.v1_project();
+    let path = env.database(id);
+    let before = fs::read(&path).unwrap();
+    let store = env.store(Sensor::V2);
+    let plan = store.plan_migration(id).unwrap();
+    let sensor = "sensor".to_owned().try_into().unwrap();
+    assert_eq!(
+        plan.steps,
+        vec![text2create_ir::PendingStep {
+            domain: Some(sensor),
+            from: 1,
+            to: 2
+        }]
+    );
+    assert_eq!(plan.revision, stored(&path).1);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(env.backups(id).is_empty());
+    assert!(matches!(store.open(id), Err(StoreError::NeedsMigration(_))));
+}
+
+#[test]
+fn an_outdated_or_altered_plan_is_refused_without_changes() {
+    let mut env = Env::new();
+    let id = env.v1_project();
+    let path = env.database(id);
+    let store = env.store(Sensor::V2);
+    let plan = store.plan_migration(id).unwrap();
+
+    // A plan whose steps differ from the migration is not an approval of it.
+    let altered = MigrationPlan {
+        steps: Vec::new(),
+        ..plan.clone()
+    };
+    let before = stored(&path);
+    assert!(matches!(
+        store.migrate(&altered, &mut env.clock, &mut env.ids),
+        Err(StoreError::PlanOutdated)
+    ));
+
+    // The project changed after the plan was made.
+    Connection::open(&path)
+        .unwrap()
+        .execute("UPDATE project_ir SET revision = revision + 1", [])
+        .unwrap();
+    let changed = stored(&path);
+    assert_eq!(changed.0, before.0);
+    assert!(matches!(
+        store.migrate(&plan, &mut env.clock, &mut env.ids),
+        Err(StoreError::PlanOutdated)
+    ));
+    assert_eq!(stored(&path), changed);
+    assert!(env.backups(id).is_empty());
+
+    // A fresh plan works.
+    store
+        .migrate_approved(id, &mut env.clock, &mut env.ids)
+        .unwrap();
 }

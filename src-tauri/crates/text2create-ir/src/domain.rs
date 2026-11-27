@@ -25,7 +25,7 @@ pub enum DomainError {
     /// The data does not match the typed payload or fails a validation rule.
     /// `path` is relative to the value the codec was given: the payload for
     /// payload checks, the document for [`DomainCodec::check_project`].
-    #[error("{}{message}", crate::strict::at(path))]
+    #[error("{}{message}", crate::strict::at_relative(path))]
     Invalid { path: FieldPath, message: String },
     /// The domain defines no migration from version `from` to `from + 1`.
     #[error("no migration from version {from}")]

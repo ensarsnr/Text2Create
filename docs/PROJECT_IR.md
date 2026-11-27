@@ -349,7 +349,7 @@ Data is never silently discarded, and data that could not be fully validated is 
 | Payload not in canonical form | Rejected (indicates an external edit or a bug) |
 | Domain not available in this build | Rejected; the file is not modified |
 | Format or domain version newer than supported | Rejected; the file is not modified |
-| Format or domain version older than supported | Rejected by loading; opened only after a backup and a [migration](#migrations) |
+| Format or domain version older than supported | Rejected by loading; opened only after the user approved a [migration](#migrations), which runs after a backup |
 
 There is no mechanism that preserves unknown fields and writes them back, because it would let unvalidated data persist in the IR. Read-only viewing of projects from newer versions is out of scope for v1.
 
@@ -360,12 +360,14 @@ Loading never migrates. A document written with an older format or domain versio
 1. parses the document with the strict parser and refuses newer or unknown format and domain versions;
 2. runs the format steps from the stored version to the current one, in order, on the JSON value;
 3. runs, for each listed domain whose version is older, the domain's payload migration once per version step for every payload of that domain, and normalizes the migrated payloads with the current codec;
-4. records each step as a provenance record with the `system` actor and a `migration` activity (`from`, `to`). The component is `project-ir` for format steps and `domain:<id>` for domain steps. The step's record becomes the `modified` provenance of every entity whose payload it changed, and of the project record. Existing provenance records are kept unchanged;
+4. records each step as a provenance record with the `system` actor and a `migration` activity (`from`, `to`). The component is `project-ir` for format steps and `domain:<id>` for domain steps. The step's record becomes the `modified` provenance, with `rev` increased, of the project record and of every record whose data the step changed: for a format step, every requirement, entity, artifact, link, or plan (including its tasks) that differs before and after the step; for a domain step, every entity whose payload it changed. Validation results keep the provenance of the tool run that produced them. Existing provenance records are kept unchanged;
 5. runs the complete loading pipeline on the result.
 
 Migrations are deterministic: the result depends only on the input, the available domains, and the clock and identifier generator of the core. They use no external services. A step that cannot convert data fails with an error that names the step and the location, and never drops or repairs data silently. The input is never modified.
 
-Format version 1 is the first format version, so this build contains no format steps. The framework is tested with a synthetic format 0 fixture (`tests/fixtures/synthetic-format-v0.json`) and test-only version 2 domains.
+Format version 1 is the first format version, so this build contains no format steps. The framework is tested with synthetic format 0 fixtures (`tests/fixtures/synthetic-format-v0.json`, and `synthetic-format-v0-entities.json` with entities) and test-only version 2 domains.
+
+A migration changes the stored project permanently, so it requires the user's approval (ADR-0011). `Project::pending_migrations` lists the steps without running them, and the store migrates only with a plan the user approved that still matches the project. Until the approval flow ([#26](https://github.com/ensarsnr/Text2Create/issues/26)) exists, the application refuses to open projects that need a migration and never migrates them.
 
 Stored projects are backed up before a migration is saved: the store first migrates in memory, then copies the database into the project's `backups/` directory with SQLite `VACUUM INTO` (which includes committed data that is still in the write-ahead log), verifies the copy, and only then saves the migrated document in one transaction ([ADR-0016](DECISIONS.md#adr-0016-project-ir-error-locations-and-versioned-migrations)). The SQLite schema version of the database (ADR-0015) is separate from the Project IR format version.
 

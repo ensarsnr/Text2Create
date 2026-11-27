@@ -22,17 +22,24 @@ pub enum LoadError {
         path: FieldPath,
         reason: &'static str,
     },
-    #[error("format version {found} is newer than the supported version {supported}")]
+    #[error(
+        "{}format version {found} is newer than the supported version {supported}",
+        at(&self.path())
+    )]
     NewerFormat { found: u64, supported: u32 },
     /// The document must be migrated with [`Project::migrate`] first.
     #[error(
-        "format version {found} is older than the supported version {supported}; the project must be migrated"
+        "{}format version {found} is older than the supported version {supported}; the project must be migrated",
+        at(&self.path())
     )]
     OlderFormat { found: u64, supported: u32 },
     /// `index` is the position in `domains`.
-    #[error("domain `{id}` is not available in this build")]
+    #[error("{}domain `{id}` is not available in this build", at(&self.path()))]
     UnknownDomain { index: usize, id: String },
-    #[error("domain `{id}` version {found} is newer than the supported version {supported}")]
+    #[error(
+        "{}domain `{id}` version {found} is newer than the supported version {supported}",
+        at(&self.path())
+    )]
     NewerDomain {
         index: usize,
         id: String,
@@ -41,7 +48,8 @@ pub enum LoadError {
     },
     /// The document must be migrated with [`Project::migrate`] first.
     #[error(
-        "domain `{id}` version {found} is older than the supported version {supported}; the project must be migrated"
+        "{}domain `{id}` version {found} is older than the supported version {supported}; the project must be migrated",
+        at(&self.path())
     )]
     OlderDomain {
         index: usize,
@@ -58,7 +66,7 @@ pub enum LoadError {
         error: serde_json::Error,
     },
     /// A domain codec rejected the payload of the entity at `index`.
-    #[error("entity `{entity}` {}{}", at(&self.path()), payload_message(error))]
+    #[error("{}entity `{entity}`: {}", at(&self.path()), domain_message(error))]
     Payload {
         index: usize,
         entity: EntityId,
@@ -68,9 +76,9 @@ pub enum LoadError {
     Invariant(#[from] InvariantError),
 }
 
-/// The message of a payload error, without the payload-relative path,
-/// which [`LoadError::path`] reports relative to the document instead.
-fn payload_message(error: &DomainError) -> String {
+/// The message of a domain error without its relative path, for errors that
+/// report the path relative to the document instead.
+pub(crate) fn domain_message(error: &DomainError) -> String {
     match error {
         DomainError::Invalid { message, .. } => format!("invalid payload: {message}"),
         other => other.to_string(),

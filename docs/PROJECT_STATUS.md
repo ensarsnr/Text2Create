@@ -30,7 +30,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 | Area | Status |
 | --- | --- |
 | Product features | Not started |
-| Project IR | v1 specified ([Project IR](PROJECT_IR.md)); model, strict loading with error locations, invariants, canonical serialization, the write path (#43), and versioned migrations (#11; no format migrations are needed yet) implemented in the `text2create-ir` crate with tests; persistence (#12) implemented in the `text2create-store` crate and exposed as Tauri commands, which the frontend does not use or have permission for yet |
+| Project IR | v1 specified ([Project IR](PROJECT_IR.md)); model, strict loading with error locations, invariants, canonical serialization, the write path (#43), and versioned migrations (#11; no format migrations are needed yet, and the application does not migrate projects until the approval flow #26 exists) implemented in the `text2create-ir` crate with tests; persistence (#12) implemented in the `text2create-store` crate and exposed as Tauri commands, which the frontend does not use or have permission for yet |
 | Local database (SQLite) | One database per project for the Project IR ([ADR-0015](DECISIONS.md#adr-0015-sqlite-library-schema-migrations-and-project-layout)); no task history or settings yet |
 | AI provider integrations | Not started |
 | Engineering tool integrations (KiCad, ngspice, Arduino CLI, ESP-IDF) | Not started; candidates only |

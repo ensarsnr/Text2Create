@@ -46,6 +46,7 @@ mod write;
 pub use invariants::{InvariantError, Rule};
 pub use migrate::{
     DOMAIN_MIGRATION_PREFIX, FORMAT_MIGRATION_COMPONENT, MigrateError, Migrated, MigrationStep,
+    PendingStep,
 };
 pub use path::FieldPath;
 pub use project::{LoadError, Project};

@@ -6,17 +6,17 @@
 //! provenance record of the system, and the result must pass the complete
 //! loading pipeline. The input bytes are never modified.
 
-use crate::domain::{CORE_DOMAIN, DomainCodec, DomainError};
+use crate::domain::{CORE_DOMAIN, DomainCodec, DomainError, DomainRegistry};
 use crate::ids::ProvenanceId;
-use crate::model::{FORMAT_SCHEMA, FORMAT_VERSION, ProjectDocument};
+use crate::model::{FORMAT_SCHEMA, FORMAT_VERSION, ProjectDocument, RecordProvenance};
 use crate::path::FieldPath;
-use crate::project::{LoadError, Project};
+use crate::project::{LoadError, Project, domain_message};
 use crate::scalar::{DomainId, Text};
 use crate::source::Source;
 use crate::strict::{self, at};
 use crate::write::{WriteEnv, bump, provenance_record, sort};
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The `system` component recorded for format migrations.
 pub const FORMAT_MIGRATION_COMPONENT: &str = "project-ir";
@@ -51,9 +51,9 @@ pub enum MigrateError {
     #[error(transparent)]
     Load(LoadError),
     /// The document already uses the current format and domain versions.
-    #[error("the project already uses the current format and domain versions")]
+    #[error("{}the project already uses the current format and domain versions", at(&self.path()))]
     UpToDate,
-    #[error("no migration from format version {from} is available")]
+    #[error("{}no migration from format version {from} is available", at(&self.path()))]
     NoFormatMigration { from: u64 },
     #[error(
         "the format migration from version {from} failed {}{message}",
@@ -64,8 +64,13 @@ pub enum MigrateError {
         path: FieldPath,
         message: String,
     },
-    /// A domain codec could not migrate a payload. `path` is the payload.
-    #[error("the migration of domain `{domain}` from version {from} failed at `{path}`: {error}")]
+    /// A domain codec could not migrate a payload. `path` is the payload;
+    /// [`MigrateError::path`] adds the location inside it.
+    #[error(
+        "{}the migration of domain `{domain}` from version {from} failed: {}",
+        at(&self.path()),
+        domain_message(error)
+    )]
     Domain {
         domain: String,
         from: u32,
@@ -105,6 +110,26 @@ pub struct MigrationStep {
     pub provenance: ProvenanceId,
 }
 
+/// A migration step that [`Project::migrate`] would apply.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingStep {
+    /// `None` for a format step, or the domain to migrate.
+    pub domain: Option<DomainId>,
+    pub from: u32,
+    pub to: u32,
+}
+
+impl MigrationStep {
+    /// The step without its provenance record, for comparison with a plan.
+    pub fn pending(&self) -> PendingStep {
+        PendingStep {
+            domain: self.domain.clone(),
+            from: self.from,
+            to: self.to,
+        }
+    }
+}
+
 /// A migrated project and the steps that produced it.
 #[derive(Clone, Debug)]
 pub struct Migrated {
@@ -127,14 +152,115 @@ impl Project {
     pub fn migrate(bytes: &[u8], env: &mut WriteEnv<'_>) -> Result<Migrated, MigrateError> {
         migrate_with(bytes, env, FORMAT_STEPS)
     }
+
+    /// The steps that [`Project::migrate`] would apply to `bytes`, without
+    /// running them. A migration changes the stored project permanently, so
+    /// the caller shows these steps to the user for approval first (ADR-0011).
+    /// Fails like [`Project::migrate`] for newer, unknown, or current versions.
+    pub fn pending_migrations(
+        bytes: &[u8],
+        registry: &DomainRegistry,
+    ) -> Result<Vec<PendingStep>, MigrateError> {
+        pending_with(bytes, registry, FORMAT_STEPS)
+    }
+}
+
+pub(crate) fn pending_with(
+    bytes: &[u8],
+    registry: &DomainRegistry,
+    format_steps: &[FormatStep],
+) -> Result<Vec<PendingStep>, MigrateError> {
+    let value = strict::parse(bytes).map_err(|e| MigrateError::Load(e.into()))?;
+    let mut pending = Vec::new();
+    let found = format_version(&value)?;
+    for version in found..u64::from(FORMAT_VERSION) {
+        let from = version as u32;
+        if !format_steps.iter().any(|step| step.from == from) {
+            return Err(MigrateError::NoFormatMigration { from: version });
+        }
+        pending.push(PendingStep {
+            domain: None,
+            from,
+            to: from + 1,
+        });
+    }
+    for (_, id, found, codec) in domain_versions(&value, registry)? {
+        for from in found..codec.version() {
+            pending.push(PendingStep {
+                domain: Some(id.clone()),
+                from,
+                to: from + 1,
+            });
+        }
+    }
+    if pending.is_empty() {
+        Project::load(bytes, registry).map_err(MigrateError::Load)?;
+        return Err(MigrateError::UpToDate);
+    }
+    Ok(pending)
 }
 
 /// A step before its provenance record is allocated.
 struct Planned {
     domain: Option<DomainId>,
     from: u32,
-    /// Entities whose payload this step changed, by position.
-    changed: Vec<usize>,
+    /// Identifiers of the records whose data this step changed.
+    changed: Vec<String>,
+}
+
+/// Collections whose records carry a `provenance` object with `modified`.
+/// Changes to a task are changes to its plan. Validation results are
+/// immutable records of a tool run, so they keep the tool's provenance.
+const TRACKED_COLLECTIONS: &[&str] = &["requirements", "entities", "artifacts", "links", "plans"];
+
+/// The identifiers of the records that differ between `before` and `after`,
+/// including records that are new in `after`.
+fn changed_records(before: &Value, after: &Value) -> Vec<String> {
+    let mut changed = Vec::new();
+    for collection in TRACKED_COLLECTIONS {
+        let old: BTreeMap<&str, &Value> = before
+            .get(collection)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|record| Some((record.get("id")?.as_str()?, record)))
+            .collect();
+        let new = after.get(collection).and_then(Value::as_array);
+        for record in new.into_iter().flatten() {
+            let Some(id) = record.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if old.get(id) != Some(&record) {
+                changed.push(id.to_owned());
+            }
+        }
+    }
+    changed
+}
+
+/// The provenance of the record with identifier `id`, if it exists.
+fn provenance_of<'d>(
+    document: &'d mut ProjectDocument,
+    id: &str,
+) -> Option<&'d mut RecordProvenance> {
+    let matches = |record: &dyn std::fmt::Display| record.to_string() == id;
+    if let Some(r) = document.requirements.iter_mut().find(|r| matches(&r.id)) {
+        return Some(&mut r.provenance);
+    }
+    if let Some(r) = document.entities.iter_mut().find(|r| matches(&r.id)) {
+        return Some(&mut r.provenance);
+    }
+    if let Some(r) = document.artifacts.iter_mut().find(|r| matches(&r.id)) {
+        return Some(&mut r.provenance);
+    }
+    if let Some(r) = document.links.iter_mut().find(|r| matches(&r.id)) {
+        return Some(&mut r.provenance);
+    }
+    document
+        .plans
+        .iter_mut()
+        .find(|r| matches(&r.id))
+        .map(|r| &mut r.provenance)
 }
 
 pub(crate) fn migrate_with(
@@ -153,6 +279,7 @@ pub(crate) fn migrate_with(
             .iter()
             .find(|step| step.from == from)
             .ok_or(MigrateError::NoFormatMigration { from: version })?;
+        let before = value.clone();
         (step.upgrade)(&mut value).map_err(|e| MigrateError::Format {
             from,
             path: e.path,
@@ -163,12 +290,12 @@ pub(crate) fn migrate_with(
         planned.push(Planned {
             domain: None,
             from,
-            changed: Vec::new(),
+            changed: changed_records(&before, &value),
         });
     }
 
     // Domain payload migrations, on a document in the current format.
-    let domains = domain_versions(&value, env)?;
+    let domains = domain_versions(&value, env.registry)?;
     for (index, id, found, codec) in domains {
         let supported = codec.version();
         if found == supported {
@@ -178,10 +305,14 @@ pub(crate) fn migrate_with(
         for from in found..supported {
             let step = migrate_domain(&mut value, codec, from)?;
             changed.extend(step.iter().copied());
+            let ids = step
+                .iter()
+                .filter_map(|&i| value["entities"][i]["id"].as_str().map(str::to_owned))
+                .collect();
             planned.push(Planned {
                 domain: Some(id.clone()),
                 from,
-                changed: step,
+                changed: ids,
             });
         }
         normalize_domain(&mut value, codec, &changed, supported)?;
@@ -209,8 +340,11 @@ pub(crate) fn migrate_with(
         document
             .provenance
             .push(provenance_record(id, &source, Vec::new(), env.clock));
-        for index in step.changed {
-            bump(&mut document.entities[index].provenance, id);
+        // A record removed by a later step is no longer there to update.
+        for record in &step.changed {
+            if let Some(provenance) = provenance_of(&mut document, record) {
+                bump(provenance, id);
+            }
         }
         bump(&mut document.project.provenance, id);
         steps.push(MigrationStep {
@@ -259,7 +393,7 @@ type ListedDomain<'r> = (usize, DomainId, u32, &'r dyn DomainCodec);
 /// entries are left to the final load.
 fn domain_versions<'r>(
     value: &Value,
-    env: &WriteEnv<'r>,
+    registry: &'r DomainRegistry,
 ) -> Result<Vec<ListedDomain<'r>>, MigrateError> {
     let mut result = Vec::new();
     let entries = value.get("domains").and_then(Value::as_array);
@@ -273,7 +407,7 @@ fn domain_versions<'r>(
         if id == CORE_DOMAIN {
             continue;
         }
-        let codec = env.registry.get(id).ok_or_else(|| {
+        let codec = registry.get(id).ok_or_else(|| {
             MigrateError::Load(LoadError::UnknownDomain {
                 index,
                 id: id.to_owned(),
@@ -380,8 +514,15 @@ mod tests {
     use crate::source::{Clock, IdGenerator};
 
     /// Synthetic format 0: like format 1, but the project name is stored as
-    /// `title`. The step renames it.
+    /// `title` and entity names as `label`. The step renames them.
     fn rename_title(value: &mut Value) -> Result<(), StepError> {
+        let entities = value.get_mut("entities").and_then(Value::as_array_mut);
+        for entity in entities.into_iter().flatten() {
+            let entity = entity.as_object_mut().expect("entities are objects");
+            if let Some(label) = entity.remove("label") {
+                entity.insert("name".to_owned(), label);
+            }
+        }
         let project = value
             .get_mut("project")
             .and_then(Value::as_object_mut)
@@ -403,6 +544,157 @@ mod tests {
     }];
 
     const V0: &str = include_str!("../tests/fixtures/synthetic-format-v0.json");
+    /// Format 0 with domain `sample` version 1 and two entities.
+    const V0_ENTITIES: &str = include_str!("../tests/fixtures/synthetic-format-v0-entities.json");
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PartV1 {
+        size: u32,
+    }
+    impl crate::domain::EntityPayload for PartV1 {}
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PartV2 {
+        size_mm: u32,
+    }
+    impl crate::domain::EntityPayload for PartV2 {}
+
+    /// Domain `sample`: version 2 renamed `size` to `size_mm`.
+    struct Sample {
+        version: u32,
+        fail: bool,
+    }
+
+    impl DomainCodec for Sample {
+        fn id(&self) -> &'static str {
+            "sample"
+        }
+        fn version(&self) -> u32 {
+            self.version
+        }
+        fn entity_kinds(&self) -> &'static [&'static str] {
+            &["part"]
+        }
+        fn normalize_entity(
+            &self,
+            _kind: &str,
+            data: &Value,
+        ) -> Result<crate::domain::NormalizedPayload, DomainError> {
+            match self.version {
+                1 => crate::domain::normalize_typed::<PartV1>(data),
+                _ => crate::domain::normalize_typed::<PartV2>(data),
+            }
+        }
+        fn migrate_entity(
+            &self,
+            _kind: &str,
+            _from: u32,
+            data: Value,
+        ) -> Result<Value, DomainError> {
+            if self.fail {
+                return Err(DomainError::invalid_at(
+                    FieldPath::root().key("size"),
+                    "cannot convert",
+                ));
+            }
+            Ok(serde_json::json!({"size_mm": data["size"]}))
+        }
+    }
+
+    fn sample(version: u32, fail: bool) -> DomainRegistry {
+        DomainRegistry::new()
+            .register(Sample { version, fail })
+            .unwrap()
+    }
+
+    fn run_with(
+        bytes: &[u8],
+        registry: &DomainRegistry,
+        steps: &[FormatStep],
+    ) -> Result<Migrated, MigrateError> {
+        let mut env = WriteEnv {
+            registry,
+            clock: &mut FixedClock,
+            ids: &mut Ids(0),
+        };
+        migrate_with(bytes, &mut env, steps)
+    }
+
+    /// The provenance of every record with a `provenance` object, by ID.
+    fn provenance_by_id(
+        document: &ProjectDocument,
+    ) -> BTreeMap<String, crate::model::RecordProvenance> {
+        let mut map = BTreeMap::new();
+        map.insert(
+            document.project.id.to_string(),
+            document.project.provenance.clone(),
+        );
+        for r in &document.requirements {
+            map.insert(r.id.to_string(), r.provenance.clone());
+        }
+        for r in &document.entities {
+            map.insert(r.id.to_string(), r.provenance.clone());
+        }
+        for r in &document.artifacts {
+            map.insert(r.id.to_string(), r.provenance.clone());
+        }
+        for r in &document.links {
+            map.insert(r.id.to_string(), r.provenance.clone());
+        }
+        for r in &document.plans {
+            map.insert(r.id.to_string(), r.provenance.clone());
+        }
+        map
+    }
+
+    /// The record provenance of the format 0 fixture, as written.
+    fn stored_provenance(text: &str) -> BTreeMap<String, crate::model::RecordProvenance> {
+        let value: Value = serde_json::from_str(text).unwrap();
+        let mut map = BTreeMap::new();
+        let mut add = |record: &Value| {
+            map.insert(
+                record["id"].as_str().unwrap().to_owned(),
+                serde_json::from_value(record["provenance"].clone()).unwrap(),
+            );
+        };
+        add(&value["project"]);
+        for collection in TRACKED_COLLECTIONS {
+            value[collection]
+                .as_array()
+                .unwrap()
+                .iter()
+                .for_each(&mut add);
+        }
+        map
+    }
+
+    /// Asserts that exactly the records in `changed` (and the project record)
+    /// point to `step` as their last modification, with `rev` increased by
+    /// one, and that all other records are unchanged.
+    #[track_caller]
+    fn assert_bumped(before: &str, migrated: &Migrated, changed: &[&str], step: ProvenanceId) {
+        let before = stored_provenance(before);
+        let after = provenance_by_id(migrated.project.document());
+        let project = migrated.project.document().project.id.to_string();
+        assert_eq!(
+            before.keys().collect::<Vec<_>>(),
+            after.keys().collect::<Vec<_>>()
+        );
+        for (id, old) in &before {
+            let new = &after[id];
+            if changed.contains(&id.as_str()) || *id == project {
+                assert_eq!(
+                    (new.rev, new.created, new.modified),
+                    (old.rev + 1, old.created, step),
+                    "{id} was changed by the step"
+                );
+            } else {
+                assert_eq!(new, old, "{id} was not changed by the step");
+            }
+        }
+    }
 
     struct FixedClock;
     impl Clock for FixedClock {
@@ -545,5 +837,197 @@ mod tests {
             run(repeated.as_bytes(), STEPS),
             Err(MigrateError::Load(LoadError::Json(_)))
         ));
+    }
+
+    const FAN: &str = "ent_01a21c90-0000-7000-8000-000000000021";
+    const SENSOR: &str = "ent_01a21c90-0000-7000-8000-000000000022";
+
+    #[test]
+    fn a_format_step_updates_the_provenance_of_the_records_it_changes() {
+        let registry = sample(1, false);
+        let migrated = run_with(V0_ENTITIES.as_bytes(), &registry, STEPS).unwrap();
+        let step = migrated.steps[0].provenance;
+        assert_eq!(migrated.project.document().entities[0].name.as_str(), "Fan");
+        assert_bumped(V0_ENTITIES, &migrated, &[FAN, SENSOR], step);
+
+        // Only the entity whose stored data differs is changed.
+        let partly = V0_ENTITIES.replacen("\"label\": \"Sensor\"", "\"name\": \"Sensor\"", 1);
+        let migrated = run_with(partly.as_bytes(), &registry, STEPS).unwrap();
+        assert_bumped(&partly, &migrated, &[FAN], migrated.steps[0].provenance);
+    }
+
+    #[test]
+    fn format_and_domain_steps_each_record_their_own_changes() {
+        // A format step that changes a requirement and the payload of one entity.
+        fn edit(value: &mut Value) -> Result<(), StepError> {
+            rename_title(value)?;
+            value["requirements"][1]["title"] = Value::from("Renamed by the format");
+            value["entities"][1]["data"]["size"] = Value::from(5);
+            Ok(())
+        }
+        let steps = [FormatStep {
+            from: 0,
+            upgrade: edit,
+        }];
+        let migrated = run_with(
+            V0_ENTITIES
+                .replacen("\"label\": \"Fan\"", "\"name\": \"Fan\"", 1)
+                .replacen("\"label\": \"Sensor\"", "\"name\": \"Sensor\"", 1)
+                .as_bytes(),
+            &sample(2, false),
+            &steps,
+        )
+        .unwrap();
+        let [format, domain] = &migrated.steps[..] else {
+            panic!("expected two steps: {:?}", migrated.steps);
+        };
+        assert_eq!(
+            (
+                format.domain.as_ref(),
+                domain.domain.as_ref().unwrap().as_str()
+            ),
+            (None, "sample")
+        );
+        let document = migrated.project.document();
+        // Only the requirement the format step edited points to it.
+        let before = stored_provenance(V0_ENTITIES);
+        let (edited, untouched) = (&document.requirements[1], &document.requirements[0]);
+        let old = &before[&edited.id.to_string()];
+        assert_eq!(
+            (edited.provenance.rev, edited.provenance.modified),
+            (old.rev + 1, format.provenance)
+        );
+        assert_eq!(untouched.provenance, before[&untouched.id.to_string()]);
+        // The sensor was changed by both steps, the fan only by the domain step.
+        let (fan, sensor) = (
+            &document.entities[0].provenance,
+            &document.entities[1].provenance,
+        );
+        assert_eq!((fan.rev, fan.modified), (3, domain.provenance));
+        assert_eq!((sensor.rev, sensor.modified), (3, domain.provenance));
+        assert_eq!(
+            document.entities[1].data.as_value(),
+            &serde_json::json!({"size_mm": 5})
+        );
+        assert_eq!(document.project.provenance.modified, domain.provenance);
+        assert_eq!(document.project.provenance.rev, 3);
+    }
+
+    #[test]
+    fn pending_steps_are_listed_without_migrating() {
+        assert_eq!(
+            pending_with(V0.as_bytes(), &DomainRegistry::new(), STEPS).unwrap(),
+            vec![PendingStep {
+                domain: None,
+                from: 0,
+                to: 1
+            }]
+        );
+        let pending = pending_with(V0_ENTITIES.as_bytes(), &sample(3, false), STEPS).unwrap();
+        let sample_id = DomainId::try_from("sample".to_owned()).unwrap();
+        assert_eq!(
+            pending,
+            vec![
+                PendingStep {
+                    domain: None,
+                    from: 0,
+                    to: 1
+                },
+                PendingStep {
+                    domain: Some(sample_id.clone()),
+                    from: 1,
+                    to: 2
+                },
+                PendingStep {
+                    domain: Some(sample_id),
+                    from: 2,
+                    to: 3
+                },
+            ]
+        );
+        // The plan matches the steps a migration applies.
+        let migrated = run_with(V0_ENTITIES.as_bytes(), &sample(2, false), STEPS).unwrap();
+        assert_eq!(
+            migrated
+                .steps
+                .iter()
+                .map(MigrationStep::pending)
+                .collect::<Vec<_>>(),
+            pending_with(V0_ENTITIES.as_bytes(), &sample(2, false), STEPS).unwrap()
+        );
+        assert!(matches!(
+            pending_with(V0.as_bytes(), &DomainRegistry::new(), &[]),
+            Err(MigrateError::NoFormatMigration { from: 0 })
+        ));
+        let current = migrated.project.to_canonical_json();
+        assert!(matches!(
+            pending_with(current.as_bytes(), &sample(2, false), STEPS),
+            Err(MigrateError::UpToDate)
+        ));
+        assert!(matches!(
+            pending_with(current.as_bytes(), &sample(1, false), STEPS),
+            Err(MigrateError::Load(LoadError::NewerDomain { .. }))
+        ));
+    }
+
+    /// Asserts that the message of `error` contains its path.
+    #[track_caller]
+    fn assert_located(error: &MigrateError, path: &str) {
+        assert_eq!(error.path().as_str(), path, "{error}");
+        let message = error.to_string();
+        let expected = if path.is_empty() {
+            "at the document root".to_owned()
+        } else {
+            format!("at `{path}`")
+        };
+        assert!(
+            message.contains(&expected),
+            "missing `{expected}` in: {message}"
+        );
+    }
+
+    #[test]
+    fn every_migration_error_names_its_location() {
+        let registry = DomainRegistry::new();
+        let current = run(V0.as_bytes(), STEPS)
+            .unwrap()
+            .project
+            .to_canonical_json();
+        assert_located(&run(current.as_bytes(), STEPS).unwrap_err(), "");
+        assert_located(&run(V0.as_bytes(), &[]).unwrap_err(), "/format/version");
+        let broken = V0.replace("\"title\":", "\"heading\":");
+        assert_located(
+            &run(broken.as_bytes(), STEPS).unwrap_err(),
+            "/project/title",
+        );
+        let newer = current.replacen("\"version\": 1", "\"version\": 2", 1);
+        assert_located(
+            &run(newer.as_bytes(), STEPS).unwrap_err(),
+            "/format/version",
+        );
+        let error = run_with(V0_ENTITIES.as_bytes(), &sample(2, true), STEPS).unwrap_err();
+        assert!(matches!(error, MigrateError::Domain { .. }), "{error}");
+        assert_located(&error, "/entities/0/data/size");
+        let error = run_with(V0_ENTITIES.as_bytes(), &registry, STEPS).unwrap_err();
+        assert!(
+            matches!(error, MigrateError::Load(LoadError::UnknownDomain { .. })),
+            "{error}"
+        );
+        assert_located(&error, "/domains/0/id");
+        fn invalid(value: &mut Value) -> Result<(), StepError> {
+            rename_title(value)?;
+            value["project"]["name"] = Value::from(" padded");
+            Ok(())
+        }
+        let error = run(
+            V0.as_bytes(),
+            &[FormatStep {
+                from: 0,
+                upgrade: invalid,
+            }],
+        )
+        .unwrap_err();
+        assert!(matches!(error, MigrateError::Invalid(_)), "{error}");
+        assert_located(&error, "/project/name");
     }
 }

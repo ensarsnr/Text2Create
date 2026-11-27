@@ -22,7 +22,7 @@ pub const MAX_NESTING_DEPTH: usize = 127;
 #[derive(Debug, thiserror::Error)]
 pub enum StrictJsonError {
     /// The input exceeds [`MAX_DOCUMENT_BYTES`].
-    #[error("document is {size} bytes; the limit is {limit} bytes")]
+    #[error("{}document is {size} bytes; the limit is {limit} bytes", at(&FieldPath::root()))]
     TooLarge { size: usize, limit: usize },
     /// Malformed or disallowed JSON at `path`. The message includes the line
     /// and column. For a repeated key, `path` is the object that repeats it.
@@ -34,8 +34,19 @@ pub enum StrictJsonError {
     },
 }
 
-/// `at <path>: ` for a location inside the document, or nothing for the root.
+/// The location prefix of an error message: `at <path>: `, or
+/// `at the document root: ` for the root.
 pub(crate) fn at(path: &FieldPath) -> String {
+    if path.as_str().is_empty() {
+        "at the document root: ".to_owned()
+    } else {
+        format!("at `{path}`: ")
+    }
+}
+
+/// The location prefix for a path relative to a part of the document, such as
+/// a payload: nothing for the part itself.
+pub(crate) fn at_relative(path: &FieldPath) -> String {
     if path.as_str().is_empty() {
         String::new()
     } else {
