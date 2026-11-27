@@ -53,7 +53,7 @@ pub enum LoadError {
 /// A Project IR document that passed every check of the loading pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
-    document: ProjectDocument,
+    pub(crate) document: ProjectDocument,
 }
 
 impl Project {
@@ -161,7 +161,7 @@ fn check_versions(raw: &Value, registry: &DomainRegistry) -> Result<(), LoadErro
 /// Processes every entity payload with its domain codec. The re-encoded
 /// payload must equal the stored payload (rule 11). Returns the record IDs
 /// each payload contains, which are resolved with the other invariants.
-fn normalize_payloads(
+pub(crate) fn normalize_payloads(
     document: &ProjectDocument,
     registry: &DomainRegistry,
 ) -> Result<Vec<(EntityId, Vec<RecordRef>)>, LoadError> {

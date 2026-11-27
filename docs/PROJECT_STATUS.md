@@ -15,7 +15,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 - Separate Content Security Policies for production builds and development
 - Default-deny command permissions: the main window may only call the `greet` command; no core plugin permissions are granted
 - CI checks for the frontend (type-check, build, `npm audit`, registry signature verification) and the desktop app on macOS (formatting, Clippy, tests, release bundle build)
-- A Project IR v1 library crate (`src-tauri/crates/text2create-ir`) without a Tauri dependency: data model, strict JSON loading, version checks, invariants, a domain codec interface, canonical serialization, and committed fixtures. CI verifies that it does not depend on Tauri.
+- A Project IR v1 library crate (`src-tauri/crates/text2create-ir`) without a Tauri dependency: data model, strict JSON loading, version checks, invariants, a domain codec interface, canonical serialization, committed fixtures, and a write path that applies typed change sets atomically and creates their provenance. CI verifies that it does not depend on Tauri.
 
 - Project documentation describing vision, scope, and the proposed architecture
 - A decision log separating accepted, provisional, and proposed decisions
@@ -30,7 +30,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 | Area | Status |
 | --- | --- |
 | Product features | Not started |
-| Project IR | v1 specified ([Project IR](PROJECT_IR.md)); model, strict loading, invariants, and canonical serialization implemented in the `text2create-ir` crate with tests; not used by the application yet; write path (#43) and persistence (#12) not started |
+| Project IR | v1 specified ([Project IR](PROJECT_IR.md)); model, strict loading, invariants, canonical serialization, and the write path (#43) implemented in the `text2create-ir` crate with tests; not used by the application yet; persistence (#12) not started |
 | Local database (SQLite) | Not integrated |
 | AI provider integrations | Not started |
 | Engineering tool integrations (KiCad, ngspice, Arduino CLI, ESP-IDF) | Not started; candidates only |
@@ -42,7 +42,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 
 1. Complete the remaining Milestone 1 validation items (background task with progress events and cancellation, tracked in #25).
 2. Collect feedback on the architecture direction, the Project IR concept, and the MVP scope.
-3. Milestone 2: complete the Project IR v1 model (#10), then the write path (#43).
+3. Milestone 2: persist the Project IR (#12) on top of the write path (#43).
 
 ## How to Help Now
 
