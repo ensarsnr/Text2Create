@@ -16,6 +16,8 @@ The repository contains a minimal desktop application skeleton: a Tauri 2 shell,
 ├── src/                  React + TypeScript frontend
 ├── src-tauri/            Tauri 2 configuration and Rust application core
 │   ├── capabilities/     Permissions granted to the frontend
+│   ├── crates/
+│   │   └── text2create-ir/  Project IR v1 library (no Tauri dependency)
 │   ├── permissions/      Generated command permissions (do not edit)
 │   ├── icons/            Application icons (Tauri template placeholders)
 │   ├── src/              Rust source code
@@ -96,9 +98,9 @@ npm audit signatures
 npm audit --audit-level=high
 
 # Rust (run in src-tauri/)
-cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
 
 # Repository
 python3 scripts/check_repository.py

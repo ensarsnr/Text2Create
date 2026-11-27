@@ -68,6 +68,13 @@ Snapshot date: 2026-11-26. Platform: macOS, Apple Silicon (`aarch64-apple-darwin
 | `markdownlint-cli2` | 0.24.2 | MIT | npm dev | Local Markdown linting (same version as the CI action) |
 | `tauri` | 2.12.5 | Apache-2.0 OR MIT | Rust runtime | Desktop application framework |
 | `tauri-build` | 2.7.4 | Apache-2.0 OR MIT | Rust build-time | Tauri build script support |
+| `serde` | 1.0.229 | MIT OR Apache-2.0 | Rust runtime | Project IR serialization (`text2create-ir`) |
+| `serde_json` | 1.0.154 | MIT OR Apache-2.0 | Rust runtime | Project IR JSON parsing and output (`text2create-ir`) |
+| `thiserror` | 2.0.21 | MIT OR Apache-2.0 | Rust runtime | Error types (`text2create-ir`) |
+| `time` | 0.3.55 | MIT OR Apache-2.0 | Rust runtime | Timestamp validation (`text2create-ir`) |
+| `uuid` | 1.29.3 | Apache-2.0 OR MIT | Rust runtime | Identifiers (`text2create-ir`) |
+
+The `text2create-ir` dependencies were already part of the dependency tree through Tauri, so they add no new packages. The crate is not linked into the application yet.
 
 The default application icons in `src-tauri/icons/` come from the Tauri project template (Apache-2.0 OR MIT). They are placeholders and must be replaced before a public release.
 

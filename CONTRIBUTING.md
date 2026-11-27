@@ -110,7 +110,7 @@ Run the repository checks locally before opening a pull request:
 
 ```sh
 npm run typecheck && npm run build
-(cd src-tauri && cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked)
+(cd src-tauri && cargo fmt --all --check && cargo clippy --locked --workspace --all-targets -- -D warnings && cargo test --locked --workspace)
 python3 scripts/check_repository.py
 npm run lint:md
 yamllint --strict .

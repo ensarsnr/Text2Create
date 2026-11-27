@@ -11,6 +11,9 @@ rust-version = "1.90"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[workspace]
+members = ["crates/text2create-ir"]
+
 [lib]
 name = "text2create_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

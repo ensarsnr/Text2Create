@@ -1,0 +1,555 @@
+{
+  "format": {
+    "schema": "text2create.project-ir",
+    "version": 1
+  },
+  "domains": [
+    {
+      "id": "example",
+      "version": 1
+    }
+  ],
+  "project": {
+    "id": "prj_01a21c90-0000-7000-8000-000000000001",
+    "provenance": {
+      "rev": 1,
+      "created": "prv_01a21c90-0000-7000-8000-000000000001",
+      "modified": "prv_01a21c90-0000-7000-8000-000000000001"
+    },
+    "name": "Example domain project",
+    "description": null
+  },
+  "provenance": [
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000001",
+      "at": "2026-11-27T10:00:00.000Z",
+      "actor": {
+        "type": "user"
+      },
+      "activity": {
+        "type": "user_edit"
+      },
+      "inputs": [],
+      "model": null
+    },
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000002",
+      "at": "2026-11-27T10:01:00.000Z",
+      "actor": {
+        "type": "model",
+        "provider": "ollama",
+        "model": "example-model"
+      },
+      "activity": {
+        "type": "interpretation"
+      },
+      "inputs": [],
+      "model": {
+        "prompt_digest": "sha256:e0ba90a1d72777690e4927512c8bb28c33936243e5c1effd7c3d43ad3cd0d76c",
+        "response_digest": "sha256:8dc84af9aae4026910c41f497d44e5189051afa911064fee8cc7a2ad2985353b"
+      }
+    },
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000003",
+      "at": "2026-11-27T10:02:00.000Z",
+      "actor": {
+        "type": "user"
+      },
+      "activity": {
+        "type": "user_edit"
+      },
+      "inputs": [],
+      "model": null
+    },
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000004",
+      "at": "2026-11-27T10:02:30.000Z",
+      "actor": {
+        "type": "model",
+        "provider": "ollama",
+        "model": "example-model"
+      },
+      "activity": {
+        "type": "task_run",
+        "task": "tsk_01a21c90-0000-7000-8000-000000000061",
+        "run": "run_01a21c90-0000-7000-8000-000000000080"
+      },
+      "inputs": [
+        {
+          "record": "req_01a21c90-0000-7000-8000-000000000011",
+          "rev": 2,
+          "digest": null
+        },
+        {
+          "record": "ent_01a21c90-0000-7000-8000-000000000021",
+          "rev": 2,
+          "digest": null
+        },
+        {
+          "record": "art_01a21c90-0000-7000-8000-000000000031",
+          "rev": null,
+          "digest": "sha256:e0c0b7c8c470abc8d33b9727b2163d933d5e6fe1efad06a3315d66dd8c082e35"
+        }
+      ],
+      "model": {
+        "prompt_digest": "sha256:e0ba90a1d72777690e4927512c8bb28c33936243e5c1effd7c3d43ad3cd0d76c",
+        "response_digest": "sha256:8dc84af9aae4026910c41f497d44e5189051afa911064fee8cc7a2ad2985353b"
+      }
+    },
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000005",
+      "at": "2026-11-27T10:03:00.000Z",
+      "actor": {
+        "type": "tool",
+        "name": "example-tool",
+        "version": "1.0.0"
+      },
+      "activity": {
+        "type": "task_run",
+        "task": "tsk_01a21c90-0000-7000-8000-000000000062",
+        "run": "run_01a21c90-0000-7000-8000-000000000081"
+      },
+      "inputs": [
+        {
+          "record": "art_01a21c90-0000-7000-8000-000000000032",
+          "rev": null,
+          "digest": "sha256:e35b0dff712fd1ed49d0ba772c9455af388b4090888295708d67288ba3846ab9"
+        },
+        {
+          "record": "req_01a21c90-0000-7000-8000-000000000019",
+          "rev": 1,
+          "digest": null
+        }
+      ],
+      "model": null
+    },
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000006",
+      "at": "2026-11-27T10:04:00.000Z",
+      "actor": {
+        "type": "user"
+      },
+      "activity": {
+        "type": "user_edit"
+      },
+      "inputs": [],
+      "model": null
+    },
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000007",
+      "at": "2026-11-27T10:05:00.000Z",
+      "actor": {
+        "type": "system",
+        "component": "example-checker"
+      },
+      "activity": {
+        "type": "import"
+      },
+      "inputs": [],
+      "model": null
+    },
+    {
+      "id": "prv_01a21c90-0000-7000-8000-000000000008",
+      "at": "2026-11-27T10:06:00.000Z",
+      "actor": {
+        "type": "system",
+        "component": "example-checker"
+      },
+      "activity": {
+        "type": "migration",
+        "from": 1,
+        "to": 1
+      },
+      "inputs": [],
+      "model": null
+    }
+  ],
+  "requirements": [
+    {
+      "id": "req_01a21c90-0000-7000-8000-000000000011",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "kind": "functional",
+      "priority": "must",
+      "status": {
+        "state": "confirmed",
+        "by": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "title": "Brackets fit the frame",
+      "statement": "Both brackets fit the frame within tolerance.",
+      "origin": {
+        "type": "user",
+        "quote": "The brackets have to fit the frame."
+      },
+      "acceptance": [
+        "Every bracket is within its tolerance.",
+        "The inspection report lists every bracket."
+      ]
+    },
+    {
+      "id": "req_01a21c90-0000-7000-8000-000000000012",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "kind": "performance",
+      "priority": "could",
+      "status": {
+        "state": "rejected",
+        "by": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "title": "Inspect in under a second",
+      "statement": "An inspection finishes in under one second.",
+      "origin": {
+        "type": "inferred",
+        "rationale": "Fast inspections shorten the feedback loop."
+      },
+      "acceptance": []
+    },
+    {
+      "id": "req_01a21c90-0000-7000-8000-000000000013",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "kind": "interface",
+      "priority": "should",
+      "status": {
+        "state": "superseded",
+        "replacement": "req_01a21c90-0000-7000-8000-000000000014",
+        "by": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "title": "Plain text report",
+      "statement": "The inspection report is plain text.",
+      "origin": {
+        "type": "clarification",
+        "question": "Which report format do you need?",
+        "answer": "Plain text."
+      },
+      "acceptance": []
+    },
+    {
+      "id": "req_01a21c90-0000-7000-8000-000000000014",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000002"
+      },
+      "kind": "safety",
+      "priority": "must",
+      "status": {
+        "state": "proposed"
+      },
+      "title": "Report lists failures first",
+      "statement": "The inspection report lists failed checks before passed checks.",
+      "origin": {
+        "type": "inferred",
+        "rationale": "Failures are the most important information."
+      },
+      "acceptance": []
+    }
+  ],
+  "entities": [
+    {
+      "id": "ent_01a21c90-0000-7000-8000-000000000021",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "kind": "example.widget",
+      "name": "Left bracket",
+      "status": {
+        "state": "accepted",
+        "by": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "data": {
+        "label": "Left bracket",
+        "size": 12,
+        "tolerance": "0.05"
+      }
+    },
+    {
+      "id": "ent_01a21c90-0000-7000-8000-000000000022",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000002"
+      },
+      "kind": "example.widget",
+      "name": "Right bracket",
+      "status": {
+        "state": "proposed"
+      },
+      "data": {
+        "label": "Right bracket",
+        "size": 12,
+        "tolerance": null
+      }
+    },
+    {
+      "id": "ent_01a21c90-0000-7000-8000-000000000023",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "kind": "example.assembly",
+      "name": "Bracket pair",
+      "status": {
+        "state": "rejected",
+        "by": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "data": {
+        "note": null,
+        "parts": [
+          "ent_01a21c90-0000-7000-8000-000000000021",
+          "ent_01a21c90-0000-7000-8000-000000000022"
+        ]
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "art_01a21c90-0000-7000-8000-000000000031",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000001",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000001"
+      },
+      "kind": "core.document",
+      "path": "docs/overview.md",
+      "ownership": "user",
+      "content": {
+        "digest": "sha256:e0c0b7c8c470abc8d33b9727b2163d933d5e6fe1efad06a3315d66dd8c082e35",
+        "size_bytes": 1200,
+        "provenance": "prv_01a21c90-0000-7000-8000-000000000001"
+      }
+    },
+    {
+      "id": "art_01a21c90-0000-7000-8000-000000000032",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000004"
+      },
+      "kind": "example.report",
+      "path": "out/report.txt",
+      "ownership": "tool_output",
+      "content": {
+        "digest": "sha256:e35b0dff712fd1ed49d0ba772c9455af388b4090888295708d67288ba3846ab9",
+        "size_bytes": 340,
+        "provenance": "prv_01a21c90-0000-7000-8000-000000000004"
+      }
+    },
+    {
+      "id": "art_01a21c90-0000-7000-8000-000000000033",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000002"
+      },
+      "kind": "core.document",
+      "path": "docs/summary.md",
+      "ownership": "generated",
+      "content": null
+    }
+  ],
+  "links": [
+    {
+      "id": "lnk_01a21c90-0000-7000-8000-000000000041",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000002"
+      },
+      "kind": "core.satisfies",
+      "from": "ent_01a21c90-0000-7000-8000-000000000021",
+      "to": "req_01a21c90-0000-7000-8000-000000000011"
+    },
+    {
+      "id": "lnk_01a21c90-0000-7000-8000-000000000042",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000007",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000007"
+      },
+      "kind": "example.verifies",
+      "from": "val_01a21c90-0000-7000-8000-000000000071",
+      "to": "req_01a21c90-0000-7000-8000-000000000011"
+    },
+    {
+      "id": "lnk_01a21c90-0000-7000-8000-000000000043",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000002"
+      },
+      "kind": "core.describes",
+      "from": "art_01a21c90-0000-7000-8000-000000000031",
+      "to": "ent_01a21c90-0000-7000-8000-000000000023"
+    }
+  ],
+  "plans": [
+    {
+      "id": "pln_01a21c90-0000-7000-8000-000000000051",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "goal": "Build and inspect the bracket report",
+      "status": {
+        "state": "approved",
+        "by": "prv_01a21c90-0000-7000-8000-000000000003"
+      },
+      "tasks": [
+        {
+          "id": "tsk_01a21c90-0000-7000-8000-000000000061",
+          "title": "Build the report",
+          "action": "example.build",
+          "depends_on": [],
+          "inputs": [
+            "ent_01a21c90-0000-7000-8000-000000000021",
+            "art_01a21c90-0000-7000-8000-000000000031"
+          ],
+          "expected_outputs": [
+            "art_01a21c90-0000-7000-8000-000000000032"
+          ],
+          "addresses": [
+            "req_01a21c90-0000-7000-8000-000000000011"
+          ],
+          "disposition": {
+            "state": "active"
+          }
+        },
+        {
+          "id": "tsk_01a21c90-0000-7000-8000-000000000062",
+          "title": "Inspect the report",
+          "action": "example.inspect",
+          "depends_on": [
+            "tsk_01a21c90-0000-7000-8000-000000000061"
+          ],
+          "inputs": [
+            "art_01a21c90-0000-7000-8000-000000000032"
+          ],
+          "expected_outputs": [],
+          "addresses": [
+            "req_01a21c90-0000-7000-8000-000000000011"
+          ],
+          "disposition": {
+            "state": "active"
+          }
+        },
+        {
+          "id": "tsk_01a21c90-0000-7000-8000-000000000063",
+          "title": "Inspect again with stricter settings",
+          "action": "example.inspect",
+          "depends_on": [
+            "tsk_01a21c90-0000-7000-8000-000000000062"
+          ],
+          "inputs": [],
+          "expected_outputs": [],
+          "addresses": [],
+          "disposition": {
+            "state": "skipped",
+            "by": "prv_01a21c90-0000-7000-8000-000000000006"
+          }
+        }
+      ]
+    },
+    {
+      "id": "pln_01a21c90-0000-7000-8000-000000000052",
+      "provenance": {
+        "rev": 2,
+        "created": "prv_01a21c90-0000-7000-8000-000000000002",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000006"
+      },
+      "goal": "Earlier attempt",
+      "status": {
+        "state": "archived",
+        "by": "prv_01a21c90-0000-7000-8000-000000000006"
+      },
+      "tasks": [
+        {
+          "id": "tsk_01a21c90-0000-7000-8000-000000000064",
+          "title": "Write the summary",
+          "action": "example.build",
+          "depends_on": [],
+          "inputs": [],
+          "expected_outputs": [
+            "art_01a21c90-0000-7000-8000-000000000033"
+          ],
+          "addresses": [],
+          "disposition": {
+            "state": "cancelled",
+            "by": "prv_01a21c90-0000-7000-8000-000000000006"
+          }
+        }
+      ]
+    },
+    {
+      "id": "pln_01a21c90-0000-7000-8000-000000000053",
+      "provenance": {
+        "rev": 1,
+        "created": "prv_01a21c90-0000-7000-8000-000000000006",
+        "modified": "prv_01a21c90-0000-7000-8000-000000000006"
+      },
+      "goal": "Next iteration",
+      "status": {
+        "state": "draft"
+      },
+      "tasks": []
+    }
+  ],
+  "validations": [
+    {
+      "id": "val_01a21c90-0000-7000-8000-000000000071",
+      "provenance": "prv_01a21c90-0000-7000-8000-000000000005",
+      "check": "example.inspect",
+      "subjects": [
+        {
+          "artifact": "art_01a21c90-0000-7000-8000-000000000032",
+          "digest": "sha256:e35b0dff712fd1ed49d0ba772c9455af388b4090888295708d67288ba3846ab9"
+        }
+      ],
+      "requirements": [
+        "req_01a21c90-0000-7000-8000-000000000011"
+      ],
+      "outcome": "failed",
+      "summary": "One bracket exceeds its tolerance.",
+      "diagnostics": [
+        {
+          "severity": "error",
+          "message": "Right bracket has no tolerance.",
+          "location": "out/report.txt:3"
+        },
+        {
+          "severity": "warning",
+          "message": "Left bracket is close to its tolerance.",
+          "location": null
+        },
+        {
+          "severity": "info",
+          "message": "Two brackets inspected.",
+          "location": null
+        }
+      ]
+    },
+    {
+      "id": "val_01a21c90-0000-7000-8000-000000000072",
+      "provenance": "prv_01a21c90-0000-7000-8000-000000000007",
+      "check": "example.inspect",
+      "subjects": [],
+      "requirements": [],
+      "outcome": "skipped",
+      "summary": "Nothing to inspect.",
+      "diagnostics": []
+    }
+  ]
+}
