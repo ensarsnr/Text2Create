@@ -30,7 +30,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 | Area | Status |
 | --- | --- |
 | Product features | Not started |
-| Project IR | v1 specified ([Project IR](PROJECT_IR.md)); model, strict loading with error locations, invariants, canonical serialization, the write path (#43), and versioned migrations (#11; no format migrations are needed yet, and the application does not migrate projects until the approval flow #26 exists) implemented in the `text2create-ir` crate with tests; persistence (#12) implemented in the `text2create-store` crate and exposed as Tauri commands, which the frontend does not use or have permission for yet |
+| Project IR | v1 specified ([Project IR](PROJECT_IR.md)); model, strict loading with error locations, invariants, canonical serialization, the write path (#43), and versioned migrations (#11; no format migrations are needed yet, and the application does not migrate projects until the approval flow #26 exists) implemented in the `text2create-ir` crate with tests; persistence (#12) and artifact file storage (#13) implemented in the `text2create-store` crate; persistence is exposed as Tauri commands, which the frontend does not use or have permission for yet. Opening a project reports artifact files changed outside Text2Create; no command writes artifact files yet |
 | Local database (SQLite) | One database per project for the Project IR ([ADR-0015](DECISIONS.md#adr-0015-sqlite-library-schema-migrations-and-project-layout)); no task history or settings yet |
 | AI provider integrations | Not started |
 | Engineering tool integrations (KiCad, ngspice, Arduino CLI, ESP-IDF) | Not started; candidates only |
@@ -42,7 +42,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 
 1. Complete the remaining Milestone 1 validation items (background task with progress events and cancellation, tracked in #25).
 2. Collect feedback on the architecture direction, the Project IR concept, and the MVP scope.
-3. Milestone 2: Project IR error locations and migrations (#11) are in review; next, artifact storage (#13).
+3. Milestone 2: artifact file storage (#13) is in review.
 
 ## How to Help Now
 

@@ -91,7 +91,7 @@ The Rust core owns project state, orchestration, tool execution, provider access
 
 SQLite is the preferred store for project metadata, Project IR records, task history, provenance, and settings. Large or tool-native artifacts (for example KiCad files or firmware binaries) are expected to remain as regular files in the project directory, referenced from the database.
 
-The `text2create-store` crate (`src-tauri/crates/text2create-store`) implements project persistence: one self-contained directory with its own SQLite database per project, the Project IR stored as validated canonical JSON, transactional saves, and automatic schema migrations. See [ADR-0015](DECISIONS.md#adr-0015-sqlite-library-schema-migrations-and-project-layout). Task history and settings are not stored yet.
+The `text2create-store` crate (`src-tauri/crates/text2create-store`) implements project persistence: one self-contained directory with its own SQLite database per project, the Project IR stored as validated canonical JSON, transactional saves, and automatic schema migrations. See [ADR-0015](DECISIONS.md#adr-0015-sqlite-library-schema-migrations-and-project-layout). It also stores artifact files in `files/` in the project directory, confined to it without following symbolic links, records their content digests through the Project IR write path, and reports files changed outside Text2Create ([ADR-0017](DECISIONS.md#adr-0017-artifact-file-storage)). Task history and settings are not stored yet.
 
 ### Project IR (Direction)
 
@@ -164,6 +164,8 @@ Artifacts are the concrete outputs of a project: source files, schematics, simul
 - Track each artifact in the Project IR with type, version, and provenance
 - Detect changes made outside Text2Create (for example, a user editing a file in KiCad)
 - Support viewing history and restoring previous versions
+
+Storage, confinement to the project directory, content digests with provenance, and detection of external changes are implemented ([ADR-0017](DECISIONS.md#adr-0017-artifact-file-storage)). Viewing history and restoring previous versions are not.
 
 **Open:** whether to use Git internally for artifact versioning, a content-addressed store, or a simpler snapshot approach.
 

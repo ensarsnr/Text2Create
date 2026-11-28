@@ -6,7 +6,9 @@
 //! <root>/
 //! └── prj_<uuid>/            one directory per project, named by its ID
 //!     ├── project.sqlite     the project database (with -wal/-shm while open)
-//!     └── backups/           copies taken before Project IR migrations
+//!     ├── backups/           copies taken before Project IR migrations
+//!     ├── files/             artifact files (see the `artifacts` module)
+//!     └── .staging/          artifact content that is not in place yet
 //! ```
 //!
 //! The database stores the Project IR document in canonical JSON. It is
@@ -14,13 +16,20 @@
 //! and read only through [`Project::load`], so every IR rule applies to stored
 //! data. A document written with an older format or domain version is opened
 //! only after the user approved a [`MigrationPlan`] and [`ProjectStore::migrate`]
-//! has backed it up and migrated it with [`Project::migrate`]. This crate adds no other way to change a project,
-//! and it has no Tauri dependency.
+//! has backed it up and migrated it with [`Project::migrate`]. Artifact files
+//! are written by [`OpenProject::write_artifact`], which records their content
+//! through the same write path. This crate adds no other way to change a
+//! project, and it has no Tauri dependency.
 
 #![forbid(unsafe_code)]
 
+mod artifacts;
 mod schema;
 
+pub use artifacts::{
+    ArtifactCheck, ArtifactError, ArtifactFile, ArtifactStatus, ArtifactWrite, FILES_DIRECTORY,
+    STAGING_DIRECTORY, WriteMode,
+};
 pub use schema::{APPLICATION_ID, SCHEMA_VERSION};
 
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, TransactionBehavior, params};
@@ -78,6 +87,9 @@ pub enum StoreError {
     /// The write path rejected the change set.
     #[error(transparent)]
     Write(#[from] WriteError),
+    /// An artifact file could not be read or written. Nothing was recorded.
+    #[error(transparent)]
+    Artifact(#[from] ArtifactError),
     #[error("the project was saved by another connection since it was opened; reopen it")]
     Conflict,
     /// The project or the available versions changed after the migration
@@ -404,6 +416,19 @@ impl OpenProject {
         clock: &mut dyn Clock,
         ids: &mut dyn IdGenerator,
     ) -> Result<Applied, StoreError> {
+        let (next, applied) = self.prepare(source, changes, clock, ids)?;
+        self.commit(next, &applied)?;
+        Ok(applied)
+    }
+
+    /// Applies a change set to a copy of the project, without saving it.
+    fn prepare(
+        &self,
+        source: &Source,
+        changes: &ChangeSet,
+        clock: &mut dyn Clock,
+        ids: &mut dyn IdGenerator,
+    ) -> Result<(Project, Applied), StoreError> {
         let mut next = self.project.clone();
         let mut env = WriteEnv {
             registry: &self.registry,
@@ -411,6 +436,12 @@ impl OpenProject {
             ids,
         };
         let applied = next.apply(source, changes, &mut env)?;
+        Ok((next, applied))
+    }
+
+    /// Saves a project returned by [`OpenProject::prepare`] in one
+    /// transaction and makes it the open project.
+    fn commit(&mut self, next: Project, applied: &Applied) -> Result<(), StoreError> {
         let updated_at = provenance_time(&next, applied.provenance);
         let transaction = self
             .connection
@@ -433,7 +464,7 @@ impl OpenProject {
         transaction.commit()?;
         self.project = next;
         self.revision += 1;
-        Ok(applied)
+        Ok(())
     }
 
     /// Closes the database connection.

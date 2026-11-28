@@ -15,6 +15,11 @@ rust-version = "1.90"
 # includes the fix for RUSTSEC-2026-0459; the system SQLite version is not
 # controlled. Default features (statement cache, wasm) are not needed.
 rusqlite = { version = "0.41.1", default-features = false, features = ["bundled"] }
+# Opens artifact paths one component at a time relative to directory handles
+# (openat with O_NOFOLLOW), so that no symbolic link is followed (#13).
+rustix = { version = "1.1.6", default-features = false, features = ["std", "fs"] }
+# SHA-256 content digests of artifact files.
+sha2 = { version = "0.11.2", default-features = false }
 text2create-ir = { path = "../text2create-ir" }
 thiserror = "2.0.21"
 
