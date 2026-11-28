@@ -33,7 +33,7 @@ The Project IR keeps conversation as an input and records its outcomes as struct
 9. **Model-friendly:** relevant parts of the IR can be serialized into compact, structured context for AI models.
 10. **Safe against untrusted input:** content originating from models, files, or external sources is validated before it is written into the IR.
 
-At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement 1 is addressed by persistence outside the IR crate ([#12](https://github.com/ensarsnr/Text2Create/issues/12), ADR-0015). Requirement 4 is addressed by append-only provenance records (see [Provenance](#provenance)): every change is attributed to its cause, but recording the individual operations of each change, and requirement 6, depend on the change journal ([#14](https://github.com/ensarsnr/Text2Create/issues/14)). Requirement 9 is addressed by a separate context projection in Milestone 3.
+At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement 1 is addressed by persistence outside the IR crate ([#12](https://github.com/ensarsnr/Text2Create/issues/12), ADR-0015). Requirement 4 is addressed by append-only provenance records (see [Provenance](#provenance)): every change is attributed to its cause. Recording the operations of each change and requirement 6 are specified in [ADR-0018](DECISIONS.md#adr-0018-project-history-and-rollback) ([#14](https://github.com/ensarsnr/Text2Create/issues/14)) and not implemented yet. Requirement 9 is addressed by a separate context projection in Milestone 3.
 
 ## Principles
 
@@ -55,7 +55,7 @@ At the model level, v1 addresses requirements 2, 3, 5, 7, 8, and 10. Requirement
 | Write path: change sets, operations, provenance creation (see [Write Path](#write-path)) | — | [#43](https://github.com/ensarsnr/Text2Create/issues/43); required before #12 |
 | — | Persistence: implemented outside the IR crate by `text2create-store` ([ADR-0015](DECISIONS.md#adr-0015-sqlite-library-schema-migrations-and-project-layout)) | [#12](https://github.com/ensarsnr/Text2Create/issues/12) |
 | `Digest` value format | Computing content digests, file access, detecting external file changes | [#13](https://github.com/ensarsnr/Text2Create/issues/13) |
-| — | Change journal, undo, rollback | [#14](https://github.com/ensarsnr/Text2Create/issues/14) |
+| — | Change history and rollback (see [History and Rollback](#history-and-rollback)) | [#14](https://github.com/ensarsnr/Text2Create/issues/14) |
 | `TaskRunId` as a reference type | Task runs, execution status, logs, timeouts | [#25](https://github.com/ensarsnr/Text2Create/issues/25), [#27](https://github.com/ensarsnr/Text2Create/issues/27) |
 | User-only decision fields (see [Invariants](#invariants)) | Approval workflow and approval records | [#26](https://github.com/ensarsnr/Text2Create/issues/26) |
 
@@ -124,9 +124,9 @@ Text and paths are not Unicode-normalized in v1: NFC is neither required nor app
 
 ### Provenance
 
-Provenance records record who or what caused each change to the project. Until the change journal ([#14](https://github.com/ensarsnr/Text2Create/issues/14)) exists, provenance records are **append-only**: a provenance record is never changed or removed, even when no current record references it anymore, for example after a record was modified again or removed. Provenance is separate from the change journal, which will record the operations of each change and reference provenance records by ID instead of duplicating them. How long provenance records are kept once the journal exists is decided in #14.
+Provenance records record who or what caused each change to the project. They are **append-only**: a provenance record is never changed or removed, even when no current record references it anymore, for example after a record was modified again or removed, or after a rollback. Provenance records are kept indefinitely, because restored records reference them. Provenance is separate from the change history ([History and Rollback](#history-and-rollback)), which records the operations of each change and references provenance records by ID instead of duplicating them.
 
-Because the document grows with every change, long-lived projects may approach the document size limit before #14 is available. This is accepted for v1.
+Because the document grows with every change, long-lived projects may approach the document size limit. This is accepted for v1.
 
 A provenance record has:
 
@@ -337,7 +337,18 @@ Provenance records are only appended. An approval check (#26) can inspect the so
 - Only the user can edit a requirement or entity that is no longer `proposed`; the decision is kept. Superseded requirements cannot be edited or decided again. A plan can be approved only as a draft, archived plans are final, and only active tasks of plans that are not archived can be skipped or cancelled.
 - A new record can be given a temporary reference so that later operations of the same change set can refer to it. Temporary references must be declared before they are used, declared only once, used at least once, and refer to the expected record type. References inside domain payloads must use identifiers of existing records.
 - Inputs must reference existing records. A change set without operations is rejected.
-- v1 has no operations that remove records.
+- v1 has no operations that remove records. Only a rollback, which is not a change set operation, can remove records (see [History and Rollback](#history-and-rollback)).
+
+## History and Rollback
+
+Specified in [ADR-0018](DECISIONS.md#adr-0018-project-history-and-rollback) ([#14](https://github.com/ensarsnr/Text2Create/issues/14)); not implemented yet. The history is stored by `text2create-store`, outside the document; the IR core computes the rolled-back document without I/O.
+
+- **Granularity:** one history entry per saved change set, with its operations in their original order and the previous version of every record it changed.
+- **A rollback is a new change.** It is accepted only from the user and is not a change set operation. It keeps every provenance record and adds one with a `restore` activity that names the provenance record of the target state. This activity is added to format version 1 without a version change, because no version has been released.
+- **Revisions only increase.** A record whose content differs from the target state gets `rev + 1` and the rollback's provenance record as `modified`; `created` is kept, and unchanged records keep their provenance. A record that returns after an earlier rollback removed it continues from its highest earlier revision. Records created after the target state are removed, except `user`-owned artifacts.
+- **The result is validated** with the complete loading checks. A rebuilt state that is incomplete, damaged, or does not match its recorded digest stops the rollback before anything is changed.
+- **`user`-owned artifacts are kept**, with their records, recorded content, and files. Generated artifact files are restored from retained content, and only if they still match their recorded content.
+- **Limits:** states before the last migration cannot be restored, and effects of irreversible actions outside the project are not undone.
 
 ## Unknown Data and Versions
 
@@ -391,7 +402,7 @@ Fixtures are compared byte for byte. These comparisons also detect dependency ch
 - **Paths:** artifact paths are validated lexically in the IR and again when files are accessed. Files are opened relative to directory handles without following symbolic links, so no access leaves the project directory ([ADR-0017](DECISIONS.md#adr-0017-artifact-file-storage)).
 - **Identifiers:** allocated by the core, so input cannot create collisions or overwrite existing records.
 - **Secrets:** API keys and credentials are never stored in the IR. Prompts and model responses are referenced by digest.
-- **Irreversible actions:** rolling back the IR does not undo effects outside it, such as flashing firmware to a device (#14, #39).
+- **Irreversible actions:** a rollback does not undo effects outside the project, such as flashing firmware to a device. The history marks them, and a rollback plan states that they are not undone (ADR-0018, #39).
 
 ## Example
 
@@ -482,7 +493,7 @@ Decisions taken while specifying v1, with the alternatives that were rejected. C
 
 | # | Topic | Decision | Rejected alternative |
 | --- | --- | --- | --- |
-| 1 | Provenance retention before the journal (#14) exists | Append-only; no provenance record is removed until #14 defines retention | Keeping only provenance referenced by the current state: loses history before #14 |
+| 1 | Provenance retention | Append-only and kept indefinitely, also after a rollback (ADR-0018) | Keeping only provenance referenced by the current state: loses history, and restored records could no longer reference their provenance |
 | 2 | Decision status on entities | Entities have `status` (`proposed`, `accepted`, `rejected`), recording the user's decision. It is separate from technical validation (see [Entities](#entities)). | No status; rely on provenance only |
 | 3 | Write path (change sets, operations, provenance creation) | A separate issue, [#43](https://github.com/ensarsnr/Text2Create/issues/43), completed before #12 | Part of #10 |
 | 4 | Code location | A separate Rust crate without a Tauri dependency, as a Cargo workspace member under `src-tauri/` | A module inside the existing application crate |
@@ -496,7 +507,5 @@ Decisions taken while specifying v1, with the alternatives that were rejected. C
 
 These remain open and belong to later issues:
 
-- How fine-grained should change history be: per field, per record, or per change set? ([#14](https://github.com/ensarsnr/Text2Create/issues/14))
-- How should rollback interact with external files and with actions that cannot be reversed, such as flashing firmware? ([#14](https://github.com/ensarsnr/Text2Create/issues/14), [#39](https://github.com/ensarsnr/Text2Create/issues/39))
 - How should the user reconcile changes made to artifacts outside Text2Create? They are detected and reported (#13); recording or reverting them needs a user decision in the interface.
 - Where should cross-domain numeric constraints (for example budget or timing) live, given that the core has no unit type?
