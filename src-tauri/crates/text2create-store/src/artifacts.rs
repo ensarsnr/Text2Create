@@ -30,8 +30,10 @@
 //!    file must not exist, or by exchanging it with the current file when
 //!    replacing. The previous content is checked after the exchange and moved
 //!    back if it is not the expected content.
-//! 3. The content record is saved. If saving fails, the new file is removed or
-//!    exchanged back, so the file and the record match again.
+//! 3. The target directory and `.staging/` are flushed to disk, and the content
+//!    record is saved. If either fails, the new file is removed or exchanged
+//!    back, and the changed directories are flushed again, so the file and the
+//!    record match again.
 //!
 //! **Crashes.** If the process stops between steps, `.staging/` may keep a file
 //! named after the artifact. It is either unfinished new content or, after an
@@ -251,10 +253,16 @@ impl OpenProject {
             }
         };
 
-        // Make the new directory entry durable before it is recorded.
-        let saved = parent
-            .sync_all()
-            .map_err(|e| StoreError::from(io_error(files_path(path), e)))
+        // Make both changed directories durable before the content is
+        // recorded: the target, which has the new entry, and `.staging/`,
+        // which lost it or holds the previous content.
+        let saved = sync_dir(&parent, Dir::Target)
+            .map_err(|e| io_error(files_path(path), e))
+            .and_then(|()| {
+                sync_dir(&dirs.staging, Dir::Staging)
+                    .map_err(|e| io_error(STAGING_DIRECTORY.to_owned(), e))
+            })
+            .map_err(StoreError::from)
             .and_then(|()| self.commit(next, &applied));
         match saved {
             Ok(()) => {
@@ -384,7 +392,7 @@ impl Placed {
         if let Placed::Replaced { staged } = self {
             // A leftover previous file is harmless; see the module documentation.
             let _ = rustix::fs::unlinkat(&dirs.staging, staged.as_str(), AtFlags::empty());
-            let _ = dirs.staging.sync_all();
+            let _ = sync_dir(&dirs.staging, Dir::Staging);
         }
     }
 
@@ -408,11 +416,29 @@ impl Placed {
                     RenameFlags::EXCHANGE,
                 )?;
                 rustix::fs::unlinkat(&dirs.staging, staged.as_str(), AtFlags::empty())?;
-                dirs.staging.sync_all()?;
+                sync_dir(&dirs.staging, Dir::Staging)?;
             }
         }
-        parent.sync_all()
+        sync_dir(parent, Dir::Target)
     }
+}
+
+/// A directory that a write changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Dir {
+    /// The directory that contains the artifact file.
+    Target,
+    /// `.staging/`.
+    Staging,
+}
+
+/// Flushes a directory's entries to disk.
+fn sync_dir(dir: &File, which: Dir) -> io::Result<()> {
+    #[cfg(test)]
+    tests::sync_hook::record(which)?;
+    #[cfg(not(test))]
+    let _ = which;
+    dir.sync_all()
 }
 
 /// Handles of the directories of one project. Holding handles instead of
@@ -759,6 +785,220 @@ fn hex_digest(hash: &[u8]) -> Digest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ProjectStore;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use text2create_ir::domain::DomainRegistry;
+    use text2create_ir::scalar::{Text, Timestamp};
+
+    /// Records directory flushes and fails one on request, per thread.
+    pub(super) mod sync_hook {
+        use super::Dir;
+        use std::cell::{Cell, RefCell};
+        use std::io;
+
+        thread_local! {
+            static LOG: RefCell<Vec<Dir>> = const { RefCell::new(Vec::new()) };
+            static FAIL: Cell<Option<Dir>> = const { Cell::new(None) };
+        }
+
+        pub fn record(which: Dir) -> io::Result<()> {
+            LOG.with(|log| log.borrow_mut().push(which));
+            if FAIL.with(|fail| fail.get()) == Some(which) {
+                FAIL.with(|fail| fail.set(None));
+                return Err(io::Error::other("injected flush failure"));
+            }
+            Ok(())
+        }
+
+        /// Clears the log; the next flush of `fail` fails once.
+        pub fn reset(fail: Option<Dir>) {
+            LOG.with(|log| log.borrow_mut().clear());
+            FAIL.with(|f| f.set(fail));
+        }
+
+        pub fn log() -> Vec<Dir> {
+            LOG.with(|log| log.borrow().clone())
+        }
+    }
+
+    struct TestClock(u32);
+
+    impl Clock for TestClock {
+        fn now(&mut self) -> Timestamp {
+            self.0 += 1;
+            Timestamp::try_from(format!("2026-11-28T11:00:{:02}.000Z", self.0)).unwrap()
+        }
+    }
+
+    struct TestIds(u128);
+
+    impl IdGenerator for TestIds {
+        fn next_uuid(&mut self) -> uuid::Uuid {
+            self.0 += 1;
+            uuid::Uuid::from_u128(0x0193_0000_0000_7000_8000_0000_0000_0000 + self.0)
+        }
+    }
+
+    /// An open project with one generated artifact `a/out.txt`, in a
+    /// temporary directory that is removed when dropped.
+    struct Fixture {
+        root: PathBuf,
+        project: OpenProject,
+        artifact: ArtifactId,
+        clock: TestClock,
+        ids: TestIds,
+    }
+
+    impl Fixture {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "text2create-sync-test-{}-{name}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            let (mut clock, mut ids) = (TestClock(0), TestIds(0));
+            let store = ProjectStore::new(root.clone(), Arc::new(DomainRegistry::new()));
+            let mut project = store
+                .create(
+                    &Source::user_edit(),
+                    Text::try_from("Sync".to_owned()).unwrap(),
+                    None,
+                    &mut clock,
+                    &mut ids,
+                )
+                .unwrap();
+            let changes = ChangeSet::from_json(
+                br#"{"inputs": [], "operations": [{"op": "add_artifact", "kind": "core.document",
+                "path": "a/out.txt", "ownership": "generated"}]}"#,
+            )
+            .unwrap();
+            project
+                .apply(&Source::user_edit(), &changes, &mut clock, &mut ids)
+                .unwrap();
+            let artifact = project.project().document().artifacts[0].id;
+            Self {
+                root,
+                project,
+                artifact,
+                clock,
+                ids,
+            }
+        }
+
+        fn write(&mut self, bytes: &[u8], mode: WriteMode) -> Result<Applied, StoreError> {
+            let write = ArtifactWrite {
+                artifact: self.artifact,
+                bytes,
+                mode,
+                inputs: Vec::new(),
+            };
+            self.project
+                .write_artifact(&Source::user_edit(), write, &mut self.clock, &mut self.ids)
+        }
+
+        fn replace(&mut self, bytes: &[u8]) -> Result<Applied, StoreError> {
+            let document = self.project.project().document();
+            let expected = document.artifacts[0]
+                .content
+                .as_ref()
+                .unwrap()
+                .digest
+                .clone();
+            self.write(bytes, WriteMode::Replace { expected })
+        }
+
+        fn file(&self) -> Option<Vec<u8>> {
+            std::fs::read(self.project.directory().join("files/a/out.txt")).ok()
+        }
+
+        fn staged(&self) -> usize {
+            std::fs::read_dir(self.project.directory().join(STAGING_DIRECTORY))
+                .unwrap()
+                .count()
+        }
+
+        /// The stored revision and document, read with a separate connection.
+        fn stored(&self) -> (i64, String) {
+            rusqlite::Connection::open(self.project.directory().join(crate::DATABASE_FILE))
+                .unwrap()
+                .query_row("SELECT revision, document FROM project_ir", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .unwrap()
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn create_flushes_the_target_and_staging_directories() {
+        let mut fixture = Fixture::new("create");
+        sync_hook::reset(None);
+        fixture.write(b"one", WriteMode::Create).unwrap();
+        assert_eq!(sync_hook::log(), [Dir::Target, Dir::Staging]);
+    }
+
+    #[test]
+    fn replace_flushes_the_target_and_staging_directories() {
+        let mut fixture = Fixture::new("replace");
+        fixture.write(b"one", WriteMode::Create).unwrap();
+        sync_hook::reset(None);
+        fixture.replace(b"two").unwrap();
+        // Both before saving, and `.staging/` again after the previous
+        // content was removed.
+        assert_eq!(sync_hook::log(), [Dir::Target, Dir::Staging, Dir::Staging]);
+        assert_eq!(fixture.file().unwrap(), b"two");
+    }
+
+    #[test]
+    fn a_failed_flush_records_nothing_and_restores_the_file() {
+        for failing in [Dir::Target, Dir::Staging] {
+            // Create: the new file is removed again.
+            let mut fixture = Fixture::new(&format!("create-{failing:?}"));
+            let (stored, document) = (fixture.stored(), fixture.project.project().clone());
+            sync_hook::reset(Some(failing));
+            let error = fixture.write(b"one", WriteMode::Create).unwrap_err();
+            assert!(
+                matches!(error, StoreError::Artifact(ArtifactError::Io { .. })),
+                "{error}"
+            );
+            assert_eq!(fixture.stored(), stored);
+            assert_eq!(fixture.project.project(), &document);
+            assert_eq!(fixture.file(), None);
+            assert_eq!(fixture.staged(), 0);
+            // The undo flushes the directory it changed.
+            let log = sync_hook::log();
+            assert_eq!(log.last(), Some(&Dir::Target), "{failing:?}: {log:?}");
+
+            // Replace: the previous content is exchanged back.
+            let mut fixture = Fixture::new(&format!("replace-{failing:?}"));
+            fixture.write(b"one", WriteMode::Create).unwrap();
+            let (stored, document) = (fixture.stored(), fixture.project.project().clone());
+            sync_hook::reset(Some(failing));
+            let error = fixture.replace(b"two").unwrap_err();
+            assert!(
+                matches!(error, StoreError::Artifact(ArtifactError::Io { .. })),
+                "{error}"
+            );
+            assert_eq!(fixture.stored(), stored);
+            assert_eq!(fixture.project.project(), &document);
+            assert_eq!(fixture.file().unwrap(), b"one");
+            assert_eq!(fixture.staged(), 0);
+            // The undo flushes both directories it changed.
+            let log = sync_hook::log();
+            assert_eq!(
+                &log[log.len() - 2..],
+                [Dir::Staging, Dir::Target],
+                "{failing:?}: {log:?}"
+            );
+            sync_hook::reset(None);
+        }
+    }
 
     #[test]
     fn components_outside_the_project_are_refused() {
