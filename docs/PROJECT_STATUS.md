@@ -2,7 +2,7 @@
 
 **Stage:** Early development — Application Foundation (Milestone 1)
 
-**Last updated:** 2026-11-27
+**Last updated:** 2026-11-28
 
 ## Summary
 
@@ -42,7 +42,7 @@ The repository contains documentation, policies, repository tooling, and a minim
 
 1. Complete the remaining Milestone 1 validation items (background task with progress events and cancellation, tracked in #25).
 2. Collect feedback on the architecture direction, the Project IR concept, and the MVP scope.
-3. Milestone 2: artifact file storage (#13) is in review.
+3. Milestone 2: artifact file storage (#13) is implemented. Change history and rollback (#14) are specified in [ADR-0018](DECISIONS.md#adr-0018-project-history-and-rollback); the implementation has not started.
 
 ## How to Help Now
 

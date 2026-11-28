@@ -40,6 +40,7 @@ This log records architecture and project decisions using lightweight Architectu
 | [ADR-0015](#adr-0015-sqlite-library-schema-migrations-and-project-layout) | SQLite library, schema migrations, and project layout | Accepted (provisional) |
 | [ADR-0016](#adr-0016-project-ir-error-locations-and-versioned-migrations) | Project IR error locations and versioned migrations | Accepted (provisional) |
 | [ADR-0017](#adr-0017-artifact-file-storage) | Artifact file storage | Accepted (provisional) |
+| [ADR-0018](#adr-0018-project-history-and-rollback) | Project history and rollback | Accepted (provisional) |
 
 ---
 
@@ -156,7 +157,7 @@ This log records architecture and project decisions using lightweight Architectu
 - **Logical model:** the IR is a single document (an aggregate of typed records with stable identifiers and references) that is loaded, validated, and checked for invariants as a whole.
 - **Persistence is separate:** the logical model does not depend on how it is stored. The physical layout is decided in [#12](https://github.com/ensarsnr/Text2Create/issues/12); SQLite remains the preferred store ([ADR-0006](#adr-0006-sqlite-for-local-persistence)).
 - **Records:** project information, requirements, entities, artifacts, links, plans with tasks, validation results, and provenance records. Native tool files stay authoritative for their content; artifacts reference them by path and content digest.
-- **Provenance is separate from history:** provenance records in the document record who or what caused each change. Until the change journal exists, they are append-only and never removed. The change journal, which records the operations of each change and enables rollback, is a separate component ([#14](https://github.com/ensarsnr/Text2Create/issues/14)) that references provenance records instead of duplicating them.
+- **Provenance is separate from history:** provenance records in the document record who or what caused each change. They are append-only and never removed. The change history, which records the operations of each change and enables rollback, is a separate component ([#14](https://github.com/ensarsnr/Text2Create/issues/14), [ADR-0018](#adr-0018-project-history-and-rollback)) that references provenance records instead of duplicating them.
 - **Planned work is separate from execution:** tasks describe planned work only. Task runs, execution status, and logs are stored outside the IR ([#27](https://github.com/ensarsnr/Text2Create/issues/27)).
 
 The schema definition approach is decided in [ADR-0014](#adr-0014-project-ir-schema-definition-domain-extensions-and-strict-loading).
@@ -169,7 +170,7 @@ The schema definition approach is decided in [ADR-0014](#adr-0014-project-ir-sch
 
 **Validation required:** the #10 implementation must confirm the model with committed fixtures, byte-identical round trips, and invariant tests, including an illustrative ESP32 project.
 
-**Consequences:** the whole project is held in memory, which is expected to be acceptable for single-user local projects of hundreds to a few thousand records. Because provenance is append-only until the journal exists, the document grows with every change. Provenance retention after the journal exists, change history granularity, and rollback semantics remain open and belong to #14.
+**Consequences:** the whole project is held in memory, which is expected to be acceptable for single-user local projects of hundreds to a few thousand records. Because provenance is append-only, the document grows with every change. Provenance retention, change history granularity, and rollback semantics are decided in [ADR-0018](#adr-0018-project-history-and-rollback).
 
 ---
 
@@ -327,7 +328,42 @@ The schema definition approach is decided in [ADR-0014](#adr-0014-project-ir-sch
 
 **Alternatives considered:** canonicalizing a path and checking that it stays inside the project before opening it, which leaves a window in which a link can be replaced; allowing symbolic links that point inside the project, which requires resolving them safely and gains little for generated files; storing artifact files directly in the project directory, which requires reserving the names of internal files in a way that also holds on case- and normalization-insensitive file systems; recording the content before writing the file, which can leave a record without a file; a transaction log spanning files and the database, which adds complexity that the ordering above avoids; implementing `openat` with `unsafe` calls to `libc`, which the store crate forbids; and implementing SHA-256 in the project.
 
-**Consequences:** two packages are added at runtime (`rustix`, `errno`), and the `sha2` packages, which were already used at build time, are also linked. Artifact paths cannot contain symbolic links. Checking a project on open reads every artifact file, so its cost grows with the total artifact size. Content history and restoring earlier versions are not provided ([#14](https://github.com/ensarsnr/Text2Create/issues/14)); a replacement keeps only the new content. Unicode normalization differences between paths are not detected as conflicts.
+**Consequences:** two packages are added at runtime (`rustix`, `errno`), and the `sha2` packages, which were already used at build time, are also linked. Artifact paths cannot contain symbolic links. Checking a project on open reads every artifact file, so its cost grows with the total artifact size. Content history and restoring earlier versions are specified in [ADR-0018](#adr-0018-project-history-and-rollback) and not implemented yet; until then, a replacement keeps only the new content. Unicode normalization differences between paths are not detected as conflicts.
+
+---
+
+## ADR-0018: Project history and rollback
+
+- **Status:** Accepted (provisional)
+- **Date:** 2026-11-28
+
+**Context:** Users need to see what changed in a project and return to a known-good state after a bad generation or execution, for both the Project IR and its artifact files ([#14](https://github.com/ensarsnr/Text2Create/issues/14)). Provenance records say who or what caused a change, but not what it changed (ADR-0008), and replacing an artifact file keeps only the new content (ADR-0017). Change sets have no operations that remove records, provenance records are append-only, and `rev` only increases. Some effects, such as flashing firmware to a device, cannot be undone at all.
+
+**Decision:**
+
+- **One history entry per saved change.** Every save of a project (creation, `OpenProject::apply`, `OpenProject::write_artifact`, and migrations) adds one entry to a `history` table in the project database, in the same transaction as the document. An entry records the new revision, the provenance record of the change, the change set with its operations in their original order, the previous version of every record the change modified (or that it did not exist), and the SHA-256 digest of the resulting state without the provenance list. A failed or conflicting save adds no entry.
+- **Earlier states are rebuilt from previous versions.** The state after the selected entry is rebuilt from the current document by undoing every later entry, newest first: each record it changed is replaced with its previous version, and each record it created is removed. Operations are never inverted one by one, so new operations need no inverse. The rebuilt state must match the digest stored in the selected entry. If any entry in between is missing or cannot be read, or the digest does not match, the rollback stops before anything is changed and reports why.
+- **A rollback is a new change.** A rollback is not a change set operation, so models cannot remove records through change sets. It is applied by the IR core (`Project::restore`, without I/O) and accepted only from the user. It keeps every existing provenance record and adds one provenance record with a new `restore` activity that names the provenance record of the target state. The activity is added to format version 1 without a version change, because no version of Text2Create has been released. A record whose content changes gets `rev + 1` and the new record as `modified`; `created` does not change; unchanged records keep their provenance. A record that returns after an earlier rollback removed it continues from its highest earlier revision, so a pinned revision never names two different contents. The final document passes the complete loading checks and is recorded as a new history entry with its own digest, so the rollback can itself be rolled back.
+- **Provenance records are kept indefinitely.** They stay append-only after a rollback, because restored records reference them.
+- **Artifact content is kept in the project database**, in a table keyed by its SHA-256 digest, so each content is stored once and is saved in the same transaction as the history entry. `write_artifact` stores the new content when it records it. Content larger than 64 MiB is not retained, and states that need it cannot be restored.
+- **A plan is approved before a rollback.** The store first produces a rollback plan without changing anything: the records that change, are removed, or return; the files that will be replaced, created, or removed; the `user`-owned artifacts that are kept; the irreversible actions that will not be undone; and anything that blocks the rollback. The user approves the plan (ADR-0011), and the rollback runs only if the project still matches it.
+- **`user`-owned artifacts are kept.** A rollback never changes, creates, or removes the file of a `user`-owned artifact, and keeps its record and recorded content as they are, also when the target state does not contain the artifact or records other content for it. The rollback plan and the history screen list them as kept. Because of this, the final document can differ from the target state, and the two are checked separately, in this order:
+  1. The target state rebuilt from the history must match the digest stored in the selected entry; otherwise the rollback stops before anything is changed.
+  2. The current records, recorded content, and files of `user`-owned artifacts are kept in the rebuilt state.
+  3. The resulting final document must pass the complete loading checks; otherwise the rollback stops before anything is changed.
+  4. The final document is saved with a new history entry and the digest of the final state. The digest of the target entry is not expected to match it.
+- **Generated files are restored without overwriting external changes.** Every file the rollback changes must match its recorded content, and every content it writes must be retained and match its digest. Otherwise nothing is changed and every reason is reported. Files are written with the ADR-0017 steps: staged in `.staging/`, moved into place with an exchange or "no replace" rename, and flushed together with their directories before the database is saved. A file that the target state does not contain is moved to `.staging/` and deleted only after the save; its content stays retained. No file outside `files/` and `.staging/` in the project directory is touched.
+- **Interrupted rollbacks are recovered explicitly.** Before any file is changed, the current content of every affected file and a journal row describing the rollback are saved in one transaction. The final save deletes the row in the same transaction as the restored document. If the row still exists when the project is opened, the save did not happen: changes to the project are refused until the user returns the files to their recorded content. Recovery also refuses to change a file that has neither the previous nor the new content.
+- **Migrations are a boundary.** Previous versions are stored in the format and domain versions of their time, so entries before the last migration are listed but cannot be restored. The backup in `backups/` (ADR-0016) holds the state before the migration.
+- **Irreversible actions are shown, not undone.** Domains declare which action kinds have effects outside the project, and history entries of task runs with such actions are marked as irreversible. Such an entry is not offered for rollback. Rolling back to a state before it is allowed after approval, and the rollback plan and the history screen state that its physical or external effects are not undone.
+- **No automatic pruning in v1.** History entries and retained content are never deleted automatically. The store reports the size of the history.
+- **A basic history screen.** The application lists the history entries with their time, actor, activity, and operations, marks entries that cannot be restored with the reason, and shows the rollback plan for approval.
+
+**Alternatives considered:** a full snapshot of the document per change, whose storage grows with the project size times the number of changes; storing an inverse for every operation, which every new operation would need and which cannot cover external file changes; Git, which adds an external program and a second store; artifact versions as files in the project directory, which bring back consistency problems between files and the database; resetting `rev` and `modified` to their values in the target state, which would let a pinned revision name two different contents; and forbidding rollbacks past irreversible actions, which would block rollbacks for the rest of the project.
+
+**Validation required:** the #14 implementation must show with integration tests that a sequence of changes can be rolled back to every earlier entry and the result validates, that artifact contents and their provenance are restored consistently, that the target state is checked against the digest of the selected entry before `user`-owned artifacts are kept, that the final document with the kept `user`-owned artifacts (also ones the target state does not contain) passes the loading checks and is recorded with its own history entry and digest, and that missing, damaged, or mismatching history, external file changes, and interruptions at every step change nothing or are recovered.
+
+**Consequences:** a schema migration adds the history, content, and journal tables. The project database grows with every change and with retained artifact content, and so does the backup taken before a migration. Rollbacks keep growing the document, because provenance records are never removed. History before #14 is not available, and artifact content recorded before #14 can only be restored while the file still has it.
 
 ---
 
@@ -338,8 +374,6 @@ These questions do not yet have ADRs. They should be resolved through discussion
 | Topic | Question | Expected milestone |
 | --- | --- | --- |
 | Frontend tooling | Which state management and component library? (Build tool decided in ADR-0012.) | 1–2 |
-| Project IR history | Change history granularity and rollback semantics (decided in ADR-0008 and ADR-0014: logical model and schema approach) | 2 |
-| Artifact versioning | Git, content-addressed storage, or snapshots? | 2 |
 | Secrets | macOS Keychain integration approach | 3 |
 | Provider interface | How to handle capability differences across providers? | 3 |
 | Sandboxing | What isolation is practical for tool execution on macOS? | 4 |
