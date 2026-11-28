@@ -175,7 +175,7 @@ Domain objects such as components, nets, or firmware targets.
 
 ### Artifacts
 
-References to files in the project directory. The file content is never stored in the IR.
+References to files in the project directory. The file content is never stored in the IR. The files are stored in `files/` in the project directory, and `path` is relative to it ([ADR-0017](DECISIONS.md#adr-0017-artifact-file-storage)).
 
 | Field | Description |
 | --- | --- |
@@ -183,6 +183,8 @@ References to files in the project directory. The file content is never stored i
 | `path` | `ProjectPath` |
 | `ownership` | `generated` (managed by Text2Create), `user` (never overwritten without approval), `tool_output` |
 | `content` | `{ "digest", "size_bytes", "provenance" }` for the last recorded content, or `null` if the file has not been produced yet |
+
+The store writes a file and then records its SHA-256 digest and size with `record_artifact_content`, so the content record exists only for content that was written, and its provenance names the producer. A file is replaced only if it still has the recorded content, and the file of a `user`-owned artifact only by the user. Files are compared with their recorded content when a project is opened; differences (missing, changed, or unrecorded files) are reported and never recorded or repaired automatically.
 
 ### Links
 
@@ -386,7 +388,7 @@ Fixtures are compared byte for byte. These comparisons also detect dependency ch
 
 - **Untrusted content:** text in the IR is data, never instructions. Model context must show where each record came from and whether it was confirmed.
 - **Resource limits:** document size, nesting depth, text lengths, and diagnostics per result are bounded.
-- **Paths:** artifact paths are validated lexically in the IR and again against the filesystem when files are accessed (#13).
+- **Paths:** artifact paths are validated lexically in the IR and again when files are accessed. Files are opened relative to directory handles without following symbolic links, so no access leaves the project directory ([ADR-0017](DECISIONS.md#adr-0017-artifact-file-storage)).
 - **Identifiers:** allocated by the core, so input cannot create collisions or overwrite existing records.
 - **Secrets:** API keys and credentials are never stored in the IR. Prompts and model responses are referenced by digest.
 - **Irreversible actions:** rolling back the IR does not undo effects outside it, such as flashing firmware to a device (#14, #39).
@@ -496,5 +498,5 @@ These remain open and belong to later issues:
 
 - How fine-grained should change history be: per field, per record, or per change set? ([#14](https://github.com/ensarsnr/Text2Create/issues/14))
 - How should rollback interact with external files and with actions that cannot be reversed, such as flashing firmware? ([#14](https://github.com/ensarsnr/Text2Create/issues/14), [#39](https://github.com/ensarsnr/Text2Create/issues/39))
-- How should the IR detect and reconcile changes made to artifacts outside Text2Create? ([#13](https://github.com/ensarsnr/Text2Create/issues/13))
+- How should the user reconcile changes made to artifacts outside Text2Create? They are detected and reported (#13); recording or reverting them needs a user decision in the interface.
 - Where should cross-domain numeric constraints (for example budget or timing) live, given that the core has no unit type?

@@ -14,7 +14,7 @@ use text2create_ir::ids::ProjectId;
 use text2create_ir::model::ProjectDocument;
 use text2create_ir::scalar::Text;
 use text2create_ir::source::{Source, SystemClock, UuidV7Generator};
-use text2create_store::{OpenProject, ProjectStore, StoreError};
+use text2create_store::{ArtifactStatus, OpenProject, ProjectStore, StoreError};
 
 /// Directory under the application data directory that holds the projects.
 pub const PROJECTS_DIRECTORY: &str = "projects";
@@ -24,6 +24,49 @@ pub const PROJECTS_DIRECTORY: &str = "projects";
 pub struct ProjectView {
     pub id: String,
     pub document: ProjectDocument,
+    /// The state of every artifact file, checked when the project is opened.
+    /// `None` for results of other operations, which do not check files.
+    pub artifacts: Option<Vec<ArtifactCheckView>>,
+}
+
+/// The state of an artifact file compared with its recorded content. A
+/// difference is only reported; nothing is recorded or repaired.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct ArtifactCheckView {
+    pub artifact: String,
+    pub path: String,
+    /// `unchanged`, `not_produced`, `missing`, `changed` (outside
+    /// Text2Create), `unrecorded` (a file exists without recorded content), or
+    /// `unreadable`.
+    pub status: &'static str,
+    /// The digest of the file as found, for `changed` and `unrecorded`.
+    pub digest: Option<String>,
+    /// Why the file could not be checked, for `unreadable`.
+    pub error: Option<String>,
+}
+
+fn artifact_checks(project: &OpenProject) -> Vec<ArtifactCheckView> {
+    project
+        .check_artifacts()
+        .into_iter()
+        .map(|check| {
+            let (status, digest, error) = match check.status {
+                ArtifactStatus::Unchanged => ("unchanged", None, None),
+                ArtifactStatus::NotProduced => ("not_produced", None, None),
+                ArtifactStatus::Missing => ("missing", None, None),
+                ArtifactStatus::Changed { digest, .. } => ("changed", Some(digest), None),
+                ArtifactStatus::Unrecorded { digest, .. } => ("unrecorded", Some(digest), None),
+                ArtifactStatus::Unreadable(error) => ("unreadable", None, Some(error.to_string())),
+            };
+            ArtifactCheckView {
+                artifact: check.artifact.to_string(),
+                path: check.path.as_str().to_owned(),
+                status,
+                digest: digest.map(|d| d.as_str().to_owned()),
+                error,
+            }
+        })
+        .collect()
 }
 
 /// An entry of the project list.
@@ -55,6 +98,7 @@ fn view(project: &OpenProject) -> ProjectView {
     ProjectView {
         id: project.id().to_string(),
         document: project.project().document().clone(),
+        artifacts: None,
     }
 }
 
@@ -121,7 +165,9 @@ impl ProjectService {
         })
     }
 
-    /// Opens a project. The previously open project is closed first.
+    /// Opens a project. The previously open project is closed first. Every
+    /// artifact file is compared with its recorded content, so that changes
+    /// made outside Text2Create are reported (#13).
     ///
     /// A project written with an older format or domain version is not
     /// opened and not changed. Migrating it changes the stored project
@@ -136,7 +182,8 @@ impl ProjectService {
             Err(StoreError::NeedsMigration(_)) => return Err(self.migration_required(id)),
             Err(error) => return Err(error.to_string()),
         };
-        let result = view(&project);
+        let mut result = view(&project);
+        result.artifacts = Some(artifact_checks(&project));
         self.current = Some(project);
         Ok(result)
     }
@@ -424,5 +471,68 @@ mod tests {
                 .iter()
                 .all(|p| p.actor == text2create_ir::model::Actor::User {})
         );
+    }
+
+    #[test]
+    fn opening_a_project_flags_artifacts_changed_outside_text2create() {
+        use text2create_store::{ArtifactWrite, FILES_DIRECTORY, WriteMode};
+        let dir = TempDir::new("artifacts");
+        let mut service = ProjectService::new(dir.0.clone());
+        let created = service.create("Artifacts", None).unwrap();
+        let view = service
+            .apply_user_changes(
+                r#"{"inputs": [], "operations": [
+                {"op": "add_artifact", "kind": "core.document", "path": "a.md", "ownership": "generated"},
+                {"op": "add_artifact", "kind": "core.document", "path": "b.md", "ownership": "generated"}]}"#,
+            )
+            .unwrap();
+        assert_eq!(view.artifacts, None);
+        let ids: Vec<_> = view.document.artifacts.iter().map(|a| a.id).collect();
+        for &artifact in &ids {
+            let (clock, generator) = (&mut service.clock, &mut service.ids);
+            service
+                .current
+                .as_mut()
+                .unwrap()
+                .write_artifact(
+                    &Source::user_edit(),
+                    ArtifactWrite {
+                        artifact,
+                        bytes: b"generated",
+                        mode: WriteMode::Create,
+                        inputs: Vec::new(),
+                    },
+                    clock,
+                    generator,
+                )
+                .unwrap();
+        }
+        let recorded = service
+            .current
+            .as_ref()
+            .unwrap()
+            .project()
+            .document()
+            .clone();
+        service.close().unwrap();
+        let files = dir.0.join(&created.id).join(FILES_DIRECTORY);
+        fs::write(files.join("b.md"), b"edited").unwrap();
+
+        let opened = service.open(&created.id).unwrap();
+        let statuses: Vec<_> = opened
+            .artifacts
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.path, c.status, c.digest.is_some()))
+            .collect();
+        assert_eq!(
+            statuses,
+            [
+                ("a.md".to_owned(), "unchanged", false),
+                ("b.md".to_owned(), "changed", true)
+            ]
+        );
+        // The difference is reported, not recorded.
+        assert_eq!(opened.document, recorded);
     }
 }

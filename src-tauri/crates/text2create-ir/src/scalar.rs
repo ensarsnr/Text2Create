@@ -152,8 +152,8 @@ pub const MAX_PATH_LEN: usize = 1024;
 /// Maximum length of a single [`ProjectPath`] component in bytes.
 pub const MAX_PATH_COMPONENT_LEN: usize = 255;
 
-/// Project-relative path with `/` separators. Checks are lexical only;
-/// filesystem checks (symbolic links, canonicalization) belong to #13.
+/// Project-relative path with `/` separators. Checks are lexical only; the
+/// store checks paths against the file system when it accesses files (#13).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct ProjectPath(String);

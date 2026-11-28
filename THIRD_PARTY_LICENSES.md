@@ -50,7 +50,7 @@ This document is not legal advice. When in doubt, raise the question in the pull
 
 ## Dependency Inventory
 
-Snapshot date: 2026-11-26. Platform: macOS, Apple Silicon (`aarch64-apple-darwin`).
+Snapshot date: 2026-11-28. Platform: macOS, Apple Silicon (`aarch64-apple-darwin`).
 
 ### Direct Dependencies
 
@@ -75,9 +75,11 @@ Snapshot date: 2026-11-26. Platform: macOS, Apple Silicon (`aarch64-apple-darwin
 | `uuid` | 1.29.3 | Apache-2.0 OR MIT | Rust runtime | Identifiers (`text2create-ir`) |
 | `rusqlite` | 0.41.1 | MIT | Rust runtime | SQLite access for project persistence (`text2create-store`) |
 | `serde_path_to_error` | 0.1.20 | MIT OR Apache-2.0 | Rust runtime | Locations of invalid data in error messages (`text2create-ir`) |
+| `rustix` | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Rust runtime | Opening artifact files relative to directory handles without following symbolic links (`text2create-store`) |
+| `sha2` | 0.11.2 | MIT OR Apache-2.0 | Rust runtime | SHA-256 digests of artifact files (`text2create-store`) |
 | SQLite (bundled by `libsqlite3-sys` 0.39.1) | 3.54.1 | Public domain | Rust runtime | Database engine, compiled from source into the application |
 
-The `text2create-ir` dependencies were already part of the dependency tree through Tauri. `rusqlite` adds four packages: `rusqlite`, `libsqlite3-sys` (MIT), `fallible-iterator`, and `fallible-streaming-iterator` (both MIT/Apache-2.0) at runtime, and `pkg-config` and `vcpkg` (both MIT OR Apache-2.0 equivalents) at build time; it also makes `getrandom` 0.4 a runtime dependency. SQLite is in the public domain and requires no license notice. `serde_path_to_error` adds one package; its own dependencies (`itoa`, `serde`) were already present.
+The `text2create-ir` dependencies were already part of the dependency tree through Tauri. `rusqlite` adds four packages: `rusqlite`, `libsqlite3-sys` (MIT), `fallible-iterator`, and `fallible-streaming-iterator` (both MIT/Apache-2.0) at runtime, and `pkg-config` and `vcpkg` (both MIT OR Apache-2.0 equivalents) at build time; it also makes `getrandom` 0.4 a runtime dependency. SQLite is in the public domain and requires no license notice. `serde_path_to_error` adds one package; its own dependencies (`itoa`, `serde`) were already present. `rustix` adds two packages, `rustix` and `errno` (MIT OR Apache-2.0); `linux-raw-sys` is only used on Linux. `sha2` adds no package: it and its dependencies (`digest`, `block-buffer`, `crypto-common`, `hybrid-array`, `typenum`, `cpufeatures`) were already build-time dependencies of Tauri and are now also linked at runtime.
 
 The default application icons in `src-tauri/icons/` come from the Tauri project template (Apache-2.0 OR MIT). They are placeholders and must be replaced before a public release.
 
@@ -97,8 +99,8 @@ Counts include direct dependencies and exclude the Text2Create crate itself.
 | --- | --- | --- |
 | npm runtime | 5 | MIT (3), Apache-2.0 (1), Apache-2.0 OR MIT (1) |
 | npm dev | 111 | MIT (98), ISC (3), Apache-2.0 OR MIT (2), Apache-2.0 (2), MPL-2.0 (2), BSD-3-Clause (2), PSF-2.0 (1), BSD-2-Clause (1) |
-| Rust runtime | 139 | MIT OR Apache-2.0 / Apache-2.0 OR MIT and equivalent spellings (84), MIT (18), Unicode-3.0 (15), multi-license options including Zlib, Unlicense, 0BSD, or CC0-1.0 (15), BSD-3-Clause (2), BSD-3-Clause/MIT (1), BSD-3-Clause AND MIT (1), Apache-2.0 AND MIT (1), Apache-2.0 (1), MPL-2.0 (1) |
-| Rust build-time | 87 | MIT OR Apache-2.0 / Apache-2.0 OR MIT and equivalent spellings (57), MIT (19), MPL-2.0 (4), Unicode-3.0 (3), other permissive (4) |
+| Rust runtime | 148 | MIT OR Apache-2.0 / Apache-2.0 OR MIT and equivalent spellings (92), MIT (18), Unicode-3.0 (15), multi-license options including Zlib, Unlicense, 0BSD, CC0-1.0, or the LLVM exception (16), BSD-3-Clause (2), BSD-3-Clause/MIT (1), BSD-3-Clause AND MIT (1), Apache-2.0 AND MIT (1), Apache-2.0 (1), MPL-2.0 (1) |
+| Rust build-time | 80 | MIT OR Apache-2.0 / Apache-2.0 OR MIT and equivalent spellings (50), MIT (19), MPL-2.0 (4), Unicode-3.0 (3), other permissive (4) |
 | Rust dev | 0 | — |
 
 ### Licenses Requiring Review
